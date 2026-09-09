@@ -3,6 +3,13 @@
 **STATUS:** DESIGN / NOT IMPLEMENTED  
 Every API claim is tagged **OBSERVED** or **PROPOSED**. Gaps are **OPEN CONTRACT**.
 
+**Harness (lab):** `@deepseek-ai/dsh-root` **`0.1.2-rc.1`** · commit `a66e470204` · tag `dsh-v0.1.2-rc.1`  
+Checkout: `~/dsh-lab/runtime/deepseek-harness/`
+
+**Session seam:** **RESOLVED** (2026-09-09) — in-process Cordis path mirrors upstream webhook.
+
+---
+
 ## 1. Inspected first-party plugins (OBSERVED)
 
 | Plugin | Cordis service | Lab path |
@@ -10,7 +17,7 @@ Every API claim is tagged **OBSERVED** or **PROPOSED**. Gaps are **OPEN CONTRACT
 | `dsh-conversation-binding` | `conversationBinding` | `~/dsh-lab/plugins/dsh-conversation-binding` |
 | `dsh-policy-engine` | `policy` | `~/dsh-lab/plugins/dsh-policy-engine` |
 | `dsh-observability` | `observability` | `~/dsh-lab/plugins/dsh-observability` |
-| `dsh-router` | `router` (heuristic MVP) | `~/dsh-lab/plugins/dsh-router` |
+| `dsh-router` | `router` (heuristic MVP) | `~/dsh-lab/plugins/dsh-router` (**headless only**) |
 | `dsh-piblox-secrets` | `secrets` | `~/dsh-lab/plugins/dsh-piblox-secrets` |
 | `dsh-protocols` | `protocols` | `~/dsh-lab/plugins/dsh-protocols` |
 
@@ -24,7 +31,7 @@ Contract dossier SSOT: `WorkSpace/cockpit/piblox/dsh/50-contracts/CONVERSATION-B
 
 - Key: `conversationBinding`
 - Does **not** create sessions, know chat products, or own Task/`correlation_id`
-- Persistence: durable JSON ledger (default under operator home); file lock on create
+- Persistence: durable JSON ledger; file lock on create
 
 ### API (OBSERVED)
 
@@ -41,18 +48,10 @@ dump()
 ### Identity constraints (OBSERVED)
 
 - Fields: `provider`, `scope`, `external_id` — all non-empty strings
-- **No `:` allowed** in any field (canonical key uses `:`)
-- Core treats fields as **opaque** — Discord adapter chooses encodings
-
-### Binding record (OBSERVED)
-
-`provider`, `scope`, `external_id`, `session_id`, `created_at`, `last_activity_at`
+- **No `:` allowed** in any field
+- Core treats fields as **opaque**
 
 ### Discord key proposals (PROPOSED)
-
-Account id must be encoded inside `scope` or `external_id` (no fourth field exists).
-
-Convention (no colons):
 
 | Conversation kind | `provider` | `scope` | `external_id` |
 |---|---|---|---|
@@ -61,163 +60,270 @@ Convention (no colons):
 | Thread | `discord` | `<account_id>.thread` | `<thread_id>` |
 | Channel + user (optional) | `discord` | `<account_id>.channel_user` | `<channel_id>.<user_id>` |
 
-Notes:
-
-- Discord snowflakes are globally unique; channel vs thread ids do not collide in practice, but **scope still distinguishes** conversation kind for GC/TTL and human audit.
-- `account_id` is the plugin config label (not the Discord application id), so two bots in the same guild do not share bindings.
-- Guild id is **context metadata**, not part of the binding identity (per ConversationBinding non-goals).
-
-### Adapter duties (PROPOSED)
-
-1. Build identity as above.
-2. `resolveOrCreate(identity, { createSessionId })` where `createSessionId` calls the **DSH session mint seam** (OPEN — exact SDK/ACP/`ctx.agents` API to use must be confirmed before coding).
-3. On session load failure: `unbind` + recreate (explicit policy, OBSERVED contract).
-4. Never invent a second binding store.
-
 ---
 
-## 3. Policy engine (OBSERVED)
+## 3. Session integration seam (OBSERVED — RESOLVED)
 
-### Service API surface (OBSERVED from `src/index.js`)
+Primary in-process path for a Cordis Discord provider (same family as upstream webhook):
 
-```text
-evaluate(input) → Decision
-preview(agent, tools[]) 
-thresholds()
-killSwitchActive()
-resolveCorrelationId(sessionId, task)
-parkForApproval / markExecuted / explain / …
-requestApproval() → stub: use tools/pre-execute park path (ctx.approval)
-resume() → stub: upstream approval answerer
-```
+| Step | API | Package |
+|---|---|---|
+| Create | `ctx.agents.create(CreateAgentOptions)` | `@deepseek-ai/dsh-agent` → factory `@deepseek-ai/dsh-agent-loop` |
+| Resume | `ctx.agents.resume(ResumeAgentOptions)` | same |
+| Live lookup | `ctx.agents.get(sessionId)` | `@deepseek-ai/dsh-agent` |
+| Prompt | `agent.followup(UserMessage)` | Agent face from `@deepseek-ai/dsh-agent-loop` |
+| Message mint | `createUserMessage({ content, source })` | `@deepseek-ai/dsh-llm` |
 
-### Behaviour relevant to Discord
-
-- Tool calls go through Cordis `tools/pre-execute` waterfall → AUTO / APPROVAL / DENY.
-- APPROVAL park reuses upstream `ctx.approval` (`@deepseek-ai/dsh-user-approval`).
-- Config: `onApproval: park | deny`.
-- Discord interactions must **not** bypass this path for sensitive tools.
-
-### OPEN CONTRACT — Discord as approval channel
-
-Product dossiers mention future `approvalChannel: "chat-gateway"`. Today park/resume is WebUI/ACP-oriented. Relaying APPROVAL prompts to Discord buttons requires an explicit design against `ctx.approval` — **do not invent a parallel grant store**.
-
----
-
-## 4. Observability (OBSERVED)
-
-### Service API
+### CREATE (OBSERVED)
 
 ```text
-mint(sessionId) → correlation_id
-bind(sessionId, correlationId)
-current(sessionId)
-emit(type, payload, meta)
-redact(obj)
-replay(correlation_id)
-metrics(window)
-ledger()
-isDegraded() / flushBuffer()
+package: @deepseek-ai/dsh-agent (+ factory @deepseek-ai/dsh-agent-loop)
+version: 0.1.2-rc.1
+path: packages/core/agent/src/index.ts → AgentRegistry.create
+      packages/core/agent-loop/src/index.ts → AgentLoop.createAgent
+class/function: AgentRegistry.create / AgentFactory.createAgent
+signature: async create(options: CreateAgentOptions): Promise<AgentHandle>
+  CreateAgentOptions {
+    sessionId: SessionId          // caller-supplied shared agent/session id
+    meta?: { cwd?, parentSession?, agentPreset?, … }
+    agentOptions?: AgentOptions
+    signal?: AbortSignal
+    setup?: AgentSetup            // compose unpublished scope BEFORE publication
+    seed?: readonly SessionEvent[]
+  }
+returns: AgentHandle { agent: Agent; dispose(): Promise<void> }
+caller evidence:
+  packages/webhook/webhook/src/session.ts createWebhookSession()
+    sessionId = brandString<SessionId>(`webhook-${randomUUID()}`)
+    handle = await ctx.agents.create({ sessionId, signal, meta: { cwd, agentPreset }, setup })
+    handle.agent.followup(createUserMessage({ … }))
 ```
 
-### Closed event types (OBSERVED)
+Host/WebUI alternative (OBSERVED, same runtime):
 
-Includes: `request.received`, `tool.called`, `tool.returned`, `tool.failed`,
-`policy.evaluated`, `approval.*`, `task.*`, `router.decided`, …
-**Does not include** `discord.*` types.
+```text
+package: @deepseek-ai/dsh-api-session-controller 0.1.2-rc.1
+path: packages/api/session-controller/src/commands.ts
+function: SessionCommands.create / SessionCommands.prompt
+  create → agents.ensureSession(sessionId, cwd, …) → { sessionId, agentPreset? }
+  prompt → resolveAgent(sessionId) → agent.followup|steer(createUserMessage(…))
+```
 
-### PROPOSED bridging
+Discord plugin SHOULD use the **in-process `ctx.agents`** path (webhook pattern), not HTTP Host RPC.
 
-| Discord normalized event | Core emit |
+### RESUME / LOAD (OBSERVED)
+
+```text
+ctx.agents.resume({ resumeSessionId, agentOptions?, signal?, setup? }) → AgentHandle
+```
+
+- Requires `sessionPersistence` service (throws if missing).
+- Loads via `persistence.prepare(id)` then publishes like create.
+- Host path: `ApiSessionAgents.resolveAgent` → live `agents.get` else resume; missing cold session → `ApiSessionNotFound` → RemoteError `session/not-found`.
+
+Evidence: `packages/core/agent-loop/src/index.ts` `resume` / `resumeWith`; `packages/api/session-controller/src/agent.ts` `resolve` / `resume`.
+
+### PROMPT / FOLLOWUP (OBSERVED)
+
+```text
+agent.followup(message: UserMessage): void
+```
+
+- Queues an ordinary next-turn inbox item and wakes the driver.
+- Also: `steer` (next-step), `inject` (no wake), `send(message, target, wakeup)`.
+- Host `session.prompt` builds `createUserMessage` then calls `followup` (or `steer` when `mode === 'steer'`).
+
+Evidence: `packages/core/agent/src/runtime-types.ts`; `session-controller/src/commands.ts` `prompt`.
+
+### OUTPUT (OBSERVED)
+
+Durable firehose: Cordis event **`session/event`** on the Session scope.
+
+| Concern | Session event types (core) |
 |---|---|
-| Inbound message → session turn | `request.received` (+ payload hashes) |
-| Tool send/reply | `tool.called` / `tool.returned` / `tool.failed` |
-| Approval button outcome | `approval.granted` / `approval.denied` (only when wired to real approval) |
-| Transport abort | `request.aborted` |
+| Streaming deltas | `assistant/chunk` |
+| Final assistant text | `assistant/message` |
+| Tool activity | `tool/call`, `tool/result` |
+| Turn lifecycle | `turn/start`, `turn/end`, `step/start`, `step/end` |
+| Errors / cancel | turn end reasons + agent cancel; request failures via loop (see session.md) |
 
-Keep full Discord-normalized stream in plugin-local durable log if needed
-(**PROPOSED**, transport state — not a second correlation system).
+Live coordination also emits `agent/status`, `agent/inbox/*` (not a substitute for durable `session/event`).
 
-**OPEN CONTRACT:** whether Core event schema should gain `discord.*` types later.
+Evidence: `docs/subsystems/session.md`, `docs/subsystems/core.md`.
+
+**PROPOSED Discord adapter:** subscribe to `session/event` for the bound session; map committed `assistant/message` (+ optional coalesced progress from chunks) to outbound Discord delivery. Do not invent a parallel transcript store.
+
+### SESSION FAILURE / RECOVERY (OBSERVED + PROPOSED adapter policy)
+
+| Situation | OBSERVED runtime | Adapter SHOULD (PROPOSED, aligns CB contract) |
+|---|---|---|
+| Binding exists, agent live | `agents.get(id)` → `followup` | use live agent |
+| Binding exists, agent cold, persistence OK | `agents.resume({ resumeSessionId })` | resume then `followup` |
+| Binding exists, session not found / unloadable | `ApiSessionNotFound` / resume throw | `conversationBinding.unbind` → `resolveOrCreate` with new create |
+| Corrupt inbox on resume | Inbox ctor throws on invalid splice | treat as load failure → unbind + recreate |
+| `dispose()` on handle | removes agent **and** session from store | never dispose casually while binding still points at id |
+
+### CONCURRENCY (OBSERVED)
+
+- Multiple `followup` calls on the same agent are **queued** in the durable next-turn inbox.
+- A `running` driver may span consecutive queued turns; later followups wake/queue rather than requiring adapter mutex for agent correctness.
+- Host `session.prompt` maps rejection to `session/agent-busy` only for certain admission failures — ordinary queueing is the happy path.
+
+**PROPOSED:** adapter may still serialize **outbound Discord delivery** per conversation; that is transport concern, not a substitute for the agent inbox.
+
+### ROUTER (OBSERVED)
+
+- No harness package calls `router.route` / `router.dispatch` during session create/prompt.
+- `dsh-router` is a **first-party optional** plugin (wired on **headless**, not required on **web**).
+- Session execution does **not** automatically invoke the router.
+
+**PROPOSED:** Discord chat path does not inject/call `router`. Optional consumer config may call it later; never required for the provider Core.
+
+### AGENT TARGETING (OBSERVED)
+
+| Mechanism | How |
+|---|---|
+| Default model | `ctx.agentDefaultModel.currentSelection()` (webhook when model omitted) |
+| Explicit agent preset | `meta.agentPreset` + `setup: (agentCtx) => ctx.agentPresets.mount(agentCtx, preset.id)` |
+| Permission preset | `ctx.permissionPresets.set(session, id)` (webhook) |
+| Routed multi-agent | **not** part of session create — would be explicit `dsh-router` call (optional, separate) |
 
 ---
 
-## 5. Router / sessions (OBSERVED + OPEN)
+## 4. ConversationBinding `createSessionId` (OBSERVED recipe)
 
-### Router MVP (OBSERVED)
+`resolveOrCreate` calls `createSessionId` **only when the binding is missing**, under lock, and stores the returned string as `session_id`.
+
+**SHOULD call (conceptual — OBSERVED primitives):**
 
 ```text
-router.route(request, sessionCtx) → decision { correlation_id, agents, handToPlanner, … }
-router.dispatch(decision, goalText) → { mode: simple|planner, task? }
+async createSessionId() {
+  const sessionId = brandString<SessionId>(`discord-${randomUUID()}`)  // or account-scoped prefix
+  const handle = await ctx.agents.create({
+    sessionId,
+    meta: {
+      cwd: <configured absolute workspace>,
+      agentPreset: <optional preset id from account routing hints>,
+    },
+    agentOptions: { provider, model, … },  // or rely on default model via setup
+    setup: async (agentCtx) => {
+      if (preset) await ctx.agentPresets.mount(agentCtx, preset.id)
+      // optional: installInitialModelSelection like webhook
+    },
+  })
+  // PROPOSED: retain handle in plugin AccountSessionRegistry[sessionId] = handle
+  return String(sessionId)
+}
 ```
 
-Injects: `tools`, `observability`, `protocols`, `policy`.
-
-Discord must **not** reimplement router. PROPOSED options for inbound text:
-
-1. Adapter resolves binding → prompts existing session (SDK/ACP/`session.prompt`) — preferred for chat continuity.
-2. Optionally call `router.route` when a consumer profile wants multi-agent classification.
-
-Exact session prompt / agent followup seam for Cordis plugins: **OPEN CONTRACT**
-(confirm against harness version used in lab before implementation).
-
-### Multi-agent (LOCKED intent)
-
-Plugin may expose **routing primitives** (account, guild, channel → target agent alias
-in config). It must not become the DSH router.
-
----
-
-## 6. Secrets / credentials (OBSERVED)
-
-`dsh-piblox-secrets` provides Cordis `secrets`:
+**After first creation (inbound message):**
 
 ```text
-resolve(ref) → { ok, value? }
-materialize(keys, target)
-secretsGet(key, reason)  # break-glass gated
+const { binding } = await conversationBinding.resolveOrCreate(identity, { createSessionId })
+const sessionId = binding.session_id
+const agent =
+  ctx.agents.get(sessionId)
+  ?? (await ctx.agents.resume({ resumeSessionId: sessionId, setup: … })).agent
+agent.followup(createUserMessage({
+  content: [{ type: 'text', text: <normalized content> }],
+  source: { kind: 'user' /* or a dedicated source kind if/when allowed */ },
+}))
 ```
 
-**PROPOSED:** each Discord account config references a secret name, e.g.
-`credentials: DISCORD_BOT_TOKEN_VEGA`, resolved at account start — never inline
-tokens in YAML or docs examples with real values.
-
-Sibling pattern in community REFERENCE used `tokenRef` + credentials plane;
-first-party Mestryx path prefers `secrets.resolve`.
+Source `kind` values are constrained by LLM message types — webhook uses `kind: 'webhook'`. Discord may use `kind: 'user'` initially (**PROPOSED** until a dedicated source kind exists upstream).
 
 ---
 
-## 7. End-to-end flows
-
-### Inbound (PROPOSED)
+## 5. Real call graph
 
 ```text
-normalized Discord event
-  → binding resolveOrCreate
+discord.message.created                         [PROPOSED normalize]
+  → ConversationBinding.resolveOrCreate         [OBSERVED]
+      → createSessionId → ctx.agents.create     [OBSERVED]  (first time only)
   → session_id
-  → observability mint/bind
-  → session prompt / agent followup
-  → (optional) router for multi-agent profiles
-  → outbound Discord delivery
+  → ctx.agents.get | ctx.agents.resume          [OBSERVED]
+  → agent.followup(createUserMessage(…))        [OBSERVED]
+  → AgentLoop driver / tools / LLM              [OBSERVED]
+  → session/event (assistant/chunk|message, tool/*, turn/*)  [OBSERVED]
+  → Discord outbound adapter                    [PROPOSED]
 ```
 
-### Outbound (PROPOSED)
+Parallel Host path (WebUI / API gateway — OBSERVED, not preferred for in-process plugin):
 
 ```text
-DSH / tool / consumer
-  → discord.* tool or proactive API
-  → policy pre-execute (tools)
-  → outbox
-  → Discord REST
-  → delivery state + observability
+session.create → ensureSession → agents.create
+session.prompt → resolveAgent → followup
 ```
 
 ---
 
-## 8. OPEN CONTRACT checklist (blockers before coding)
+## 6. Cordis inject (minimum)
 
-1. Exact DSH session create/resume/prompt API for `createSessionId` + inbound text.
-2. Discord approval channel vs existing `ctx.approval` park path.
-3. Whether Core `EVENT_TYPES` gains Discord types or stays payload-bridged.
-4. Cordis `inject` list for this plugin (`conversationBinding`, `observability`, `secrets`, `tools`, …).
-5. Profile wiring strategy (new discord profile vs headless/web) — out of scope to activate now.
+| Service | Class | Why |
+|---|---|---|
+| `agents` | **REQUIRED** | create / resume / get / followup |
+| `conversationBinding` | **REQUIRED** | binding SSOT |
+| `secrets` | **REQUIRED** | Discord token refs |
+| `agentPresets` | **OPTIONAL** | explicit preset targeting (webhook injects it) |
+| `agentDefaultModel` | **OPTIONAL** | default model selection |
+| `permissionPresets` | **OPTIONAL** | session permission preset |
+| `workspaceRegistry` | **OPTIONAL** | workspace attach (webhook); cwd-only may suffice |
+| `sessionTitle` | **OPTIONAL** | human titles |
+| `observability` | **OPTIONAL** (recommended) | Core event bridge; soft-get OK if absent |
+| `tools` | **OPTIONAL** until registering `discord.*` tools | hard-inject when exposing tools (secrets pattern) |
+| `router` | **NOT_REQUIRED** | not on session path |
+| `policy` | **NOT_REQUIRED** as inject | when loaded in profile, `tools/pre-execute` applies globally |
+| `protocols` | **NOT_REQUIRED** | Task ledger not required for chat provider Core |
+
+Upstream analogue inject (OBSERVED webhook):  
+`agents`, `agentDefaultModel`, `agentPresets`, `permissionPresets`, `sessionTitle`, `workspaceRegistry`.
+
+---
+
+## 7. Tool registration (OBSERVED — no Discord tools registered yet)
+
+| Concern | Evidence |
+|---|---|
+| Registration API | `ctx.tools.register(definition)` or `ctx.tools.register(name, def)` — first-party prefers **one-arg object** inside `ctx.effect` (`dsh-piblox-secrets`) |
+| Inject | `export const inject = ['tools']` when registering tools |
+| Schema | `name`, `description`, `parameters` (JSON Schema), `output`, `async execute` |
+| Policy path | Cordis waterfall **`tools/pre-execute`** (`@deepseek-ai/dsh-tools`) — `dsh-policy-engine` and `dsh-observability` both listen |
+| Auto traversal | **Yes** — any registered tool execution goes through `tools/pre-execute` when the tools runtime dispatches |
+
+Manifest: Cordis bundle row via `cordis.patch.yml` / `package.json` `dsh.bundle.patch` (sibling plugins).
+
+---
+
+## 8. Policy / observability (unchanged summary)
+
+### Policy (OBSERVED)
+
+- Service `policy`; APPROVAL park via `tools/pre-execute` + `ctx.approval`.
+- `policy.requestApproval()` remains a stub.
+
+**OPEN CONTRACT:** Discord as `approvalChannel` / park UX (not a session-seam blocker).
+
+### Observability (OBSERVED)
+
+- Closed `EVENT_TYPES`; bridge Discord via allowed Core types + payloads.
+
+**OPEN CONTRACT:** whether Core gains `discord.*` event types later.
+
+---
+
+## 9. Secrets / credentials (OBSERVED)
+
+```text
+secrets.resolve(ref) → { ok, value? }
+```
+
+---
+
+## 10. Remaining OPEN (non-session)
+
+1. Discord approval channel vs `ctx.approval` park path.
+2. Core `EVENT_TYPES` Discord extension vs payload-bridge only.
+3. Config allowlist empty-list semantics.
+4. Exact `discord.js` 14.x pin.
+5. Profile wiring / activation (forbidden until operator authorizes).
+6. Dedicated `MessageSource.kind` for Discord (may start as `user`).

@@ -1,7 +1,7 @@
 # Design status — dsh-piblox-discord
 
 **STATUS:** DESIGN / NOT IMPLEMENTED  
-**READY_FOR_IMPLEMENTATION:** NO
+**READY_FOR_IMPLEMENTATION:** **YES** (session seam resolved 2026-09-09; no `src/` yet)
 
 Statuses: `LOCKED` | `PROPOSED` | `OPEN` | `BLOCKED`
 
@@ -10,44 +10,45 @@ Statuses: `LOCKED` | `PROPOSED` | `OPEN` | `BLOCKED`
 | Generic Discord provider (not product bot) | LOCKED | Mission §1–2; ADR-0001 |
 | Cordis / DSH first-party plugin | LOCKED | O-05=c plugins path; mission §2.1 |
 | Multi-account `0..N` | LOCKED | Mission §2.3; ADR-0002 |
-| **Modern Discord API / Components V2 baseline** | **LOCKED** | **ADR-0007; API v10; discord.js 14.x; V2-native render** |
+| **Modern Discord API / Components V2 baseline** | **LOCKED** | **ADR-0007** |
 | Discord HTTP API `v10` (transport-isolated) | LOCKED | ADR-0007 |
 | Client direction `discord.js` 14.x | LOCKED | ADR-0007 (exact pin OPEN at impl time) |
-| Components V2 first-class (not legacy-first) | LOCKED | FEATURE-CONTRACT; ARCHITECTURE §5 |
+| Components V2 first-class (not legacy-first) | LOCKED | FEATURE-CONTRACT; ARCHITECTURE |
 | Legacy message compatibility | LOCKED | FEATURE-CONTRACT |
-| Installation contexts modeled (`GUILD_INSTALL` / `USER_INSTALL`) | LOCKED | contracts; V1 ops may be guild-only |
-| Interaction delivery-agnostic (Gateway now / HTTP later) | LOCKED | EVENT-CONTRACT §4 |
-| Create Message `nonce` + `enforce_nonce` (no HTTP Idempotency-Key) | LOCKED | FEATURE + STATE-RELIABILITY |
+| Installation contexts modeled | LOCKED | contracts |
+| Interaction delivery-agnostic | LOCKED | EVENT-CONTRACT |
+| Create Message `nonce` + `enforce_nonce` | LOCKED | FEATURE + STATE-RELIABILITY |
 | Lossless Discord bitfields | LOCKED | ADR-0007 |
-| Forward-compatible events/components/REST escape hatch | LOCKED | ADR-0007; ARCHITECTURE §6 |
-| Reuse `conversationBinding` | LOCKED | OBSERVED service + ADR-0003 |
+| Forward-compatible transport | LOCKED | ADR-0007 |
+| Reuse `conversationBinding` | LOCKED | OBSERVED + ADR-0003 |
 | Discord binding key encoding | PROPOSED | DSH-INTEGRATION §2 |
-| Policy boundary (intent ≠ auth) | LOCKED | Mission §2.5; ADR-0004; OBSERVED policy park path |
-| Observability integration (no parallel Core telemetry) | LOCKED | Mission §2.6; OBSERVED `observability` service |
-| Bridge `discord.*` → closed Core event types | PROPOSED | EVENT-CONTRACT; OBSERVED closed EVENT_TYPES |
-| Extend Core EVENT_TYPES with `discord.*` | OPEN | Requires observability/schema change |
-| Credential ownership via `secrets` | LOCKED | OBSERVED `dsh-piblox-secrets`; ADR-0005 adjacent |
-| Routing model (adapter, not router) | PROPOSED | DSH-INTEGRATION §5 |
-| Exact session mint / prompt seam | OPEN | Need harness API confirmation |
+| Policy boundary (intent ≠ auth) | LOCKED | ADR-0004 |
+| Observability integration | LOCKED | Mission §2.6 |
+| Bridge `discord.*` → closed Core event types | PROPOSED | EVENT-CONTRACT |
+| Extend Core EVENT_TYPES with `discord.*` | OPEN | Schema change |
+| Credential ownership via `secrets` | LOCKED | OBSERVED |
+| **Session create/resume/followup seam** | **LOCKED** | **ADR-0008; `ctx.agents` + `followup` + `session/event` @ 0.1.2-rc.1** |
+| Session mint via Host RPC only | Rejected | ADR-0008 |
+| Routing model (adapter, not router) | LOCKED | Router not on harness session path |
+| Exact session mint / prompt seam | **LOCKED** | Was OPEN; resolved ADR-0008 |
 | Discord as `approvalChannel` | OPEN | `policy.requestApproval` stub; WebUI park today |
-| Event contract (normalized) | PROPOSED | EVENT-CONTRACT.md (baseline LOCKED; field shapes PROPOSED) |
+| Event contract (normalized) | PROPOSED | EVENT-CONTRACT.md |
 | Tool contract namespaces | PROPOSED | TOOL-CONTRACT.md |
-| State ownership (no CB duplicate) | LOCKED | ADR-0005; OBSERVED CB store |
+| Tool registration path | LOCKED (observed) | `ctx.tools.register` + `tools/pre-execute` waterfall |
+| State ownership (no CB duplicate) | LOCKED | ADR-0005 |
 | Outbox / retry / 429 model | PROPOSED | STATE-RELIABILITY.md |
-| Idempotency model (nonce vs operation IDs) | LOCKED principle / PROPOSED store shape | STATE-RELIABILITY + TOOL-CONTRACT |
-| V1 feature set (incl. Components V2 foundation) | PROPOSED tiers / LOCKED baseline | FEATURE-CONTRACT.md (pending human lock of remaining OPEN) |
+| Idempotency model | LOCKED principle | nonce / operation IDs |
+| V1 feature set | PROPOSED tiers / LOCKED baseline | FEATURE-CONTRACT.md |
 | V2 / LATER feature set | PROPOSED | FEATURE-CONTRACT.md |
-| Voice strategy | OPEN | Explicitly LATER; no design commitment |
-| Exact `discord.js` 14.x version pin | OPEN | Within LOCKED 14.x direction |
+| Voice strategy | OPEN | LATER |
+| Exact `discord.js` 14.x version pin | OPEN | Within 14.x |
 | FakeTransport | PROPOSED | FEATURE + STATE-RELIABILITY |
 | Config allowlist empty-list semantics | OPEN | CONFIGURATION.md |
-| Profile activation / wiring | BLOCKED | Mission forbids modifying profiles now |
-| Live Discord Application / tokens | BLOCKED | Mission forbids |
-| Implementation `src/` | BLOCKED | Until OPEN material items reviewed |
+| Profile activation / wiring | BLOCKED | Needs operator authorize |
+| Live Discord Application / tokens | BLOCKED | Until implementation spike authorized |
+| Implementation `src/` | BLOCKED until coding mission | READY_FOR_IMPLEMENTATION=YES unlocks coding mission only |
 
 ## Term audit (bootstrap docs)
-
-Occurrences of sensitive terms are intentional and scoped:
 
 | Term | Allowed use in docs |
 |---|---|

@@ -58,6 +58,12 @@ Those belong in consumer plugins / domain seats that call this provider.
 **`discord.js` 14.x** direction, Components V2 as first-class transport/render
 (not legacy ActionRow-first). See [docs/adr/0007-modern-discord-baseline.md](docs/adr/0007-modern-discord-baseline.md).
 
+**Session seam LOCKED:** in-process `ctx.agents.create` / `resume` + `agent.followup`
++ `session/event` (harness `0.1.2-rc.1`). See [docs/adr/0008-session-seam.md](docs/adr/0008-session-seam.md).
+
+**STATUS note:** `READY_FOR_IMPLEMENTATION = YES` in [DESIGN-STATUS.md](DESIGN-STATUS.md)
+(design complete for session seam; coding still requires an explicit implementation mission).
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/adr/](docs/adr/).
 
 ## Design documents
