@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+*.tgz
+*.db
+*.db-*
+.env
+.env.*
+!.env.example
+*.log
+.secrets-key
+data/
+.credentials.yaml
+**/token*
+**/DISCORD_*
