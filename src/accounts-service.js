@@ -17,14 +17,17 @@ import { INTENT_OPTIONS } from './intents.js'
  * @param {{
  *   configStore: ReturnType<import('./accounts-config-store.js').createAccountsConfigStore>,
  *   secrets?: {
+ *     set?(name: string, value: string): Promise<{ ok: boolean, name?: string, message?: string, code?: string }>,
+ *     delete?(name: string): Promise<{ ok: boolean, deleted?: boolean, message?: string }>,
+ *     listNames?(): Promise<{ ok: boolean, names: string[] }>,
+ *     hasKey?(name: string): boolean,
+ *     resolve?(ref: string): { ok: boolean, value?: string },
  *     store?: {
  *       setSecret(name: string, value: string): Promise<{ name: string }>,
  *       deleteSecret(name: string): Promise<boolean>,
  *       listNames(): Promise<string[]>,
  *       getSecretValue?(name: string): Promise<string | null>,
  *     },
- *     hasKey?(name: string): boolean,
- *     resolve?(ref: string): { ok: boolean, value?: string },
  *   },
  *   transport?: { isAccountRunning(id: string): boolean, startAccount?: Function, stopAccount?: Function },
  *   outbox?: { isAccountIsolated?(id: string): boolean, clearAccountIsolation?(id: string): void },
@@ -44,19 +47,69 @@ export function createDiscordAccountsService(deps) {
 
   /** Reload classification (evidence-based). */
   const RELOAD = Object.freeze({
-    credentialWrite: 'HOT_RELOAD_SUPPORTED', // SQLite vault write is immediate via store.getSecretValue
+    credentialWrite: 'HOT_RELOAD_SUPPORTED', // secrets.set/delete hot-updates vault; resolve() immediate
     applyTokenToGateway: 'ACCOUNT_RESTART_REQUIRED', // live Gateway must restart account (not implemented yet)
     pluginConfigMutation: 'HOT_RELOAD_SUPPORTED', // in-process accounts map updated
     profilePatch: 'PROFILE_RESTART_REQUIRED', // Cordis patch seed only
   })
 
+  /**
+   * Prefer credential-plane secrets.set (store + vault atomic). Fallback: store.setSecret.
+   * @param {string} ref
+   * @param {string} value
+   */
+  async function writeSecret(ref, value) {
+    if (typeof secrets?.set === 'function') {
+      const result = await secrets.set(ref, value)
+      if (!result?.ok) {
+        throw new Error(result?.message || result?.code || 'secrets.set failed')
+      }
+      return
+    }
+    if (secrets?.store?.setSecret) {
+      await secrets.store.setSecret(ref, value)
+      return
+    }
+    throw new Error('secrets service unavailable — cannot write Discord token')
+  }
+
+  /**
+   * Prefer secrets.delete (store + vault). Fallback: store.deleteSecret.
+   * @param {string} ref
+   */
+  async function deleteSecret(ref) {
+    if (typeof secrets?.delete === 'function') {
+      const result = await secrets.delete(ref)
+      if (!result?.ok) {
+        throw new Error(result?.message || result?.code || 'secrets.delete failed')
+      }
+      return Boolean(result.deleted)
+    }
+    if (secrets?.store?.deleteSecret) {
+      return secrets.store.deleteSecret(ref)
+    }
+    throw new Error('secrets service unavailable')
+  }
+
+  async function listSecretNames() {
+    if (typeof secrets?.listNames === 'function') {
+      const result = await secrets.listNames()
+      return result?.names || []
+    }
+    if (secrets?.store?.listNames) {
+      return secrets.store.listNames()
+    }
+    return []
+  }
+
   async function credentialConfigured(ref) {
     if (!ref) return false
-    if (!secrets?.store?.listNames) {
-      if (typeof secrets?.hasKey === 'function') return Boolean(secrets.hasKey(ref))
-      return false
+    if (typeof secrets?.hasKey === 'function' && secrets.hasKey(ref)) return true
+    if (typeof secrets?.resolve === 'function') {
+      const r = secrets.resolve(ref)
+      if (r?.ok) return true
     }
-    const names = await secrets.store.listNames()
+    const names = await listSecretNames()
     return names.includes(ref)
   }
 
@@ -204,12 +257,8 @@ export function createDiscordAccountsService(deps) {
     let secretCreated = false
     try {
       if (token) {
-        if (!secrets?.store?.setSecret) {
-          throw new Error('secrets store unavailable — cannot write Discord token')
-        }
-        // Only create secret when account is new (checked above).
-        const existed = (await secrets.store.listNames()).includes(ref)
-        await secrets.store.setSecret(ref, token)
+        const existed = (await listSecretNames()).includes(ref)
+        await writeSecret(ref, token)
         secretCreated = !existed
       }
 
@@ -220,9 +269,9 @@ export function createDiscordAccountsService(deps) {
         data.accounts[id] = account
       })
     } catch (err) {
-      if (secretCreated && secrets?.store?.deleteSecret) {
+      if (secretCreated) {
         try {
-          await secrets.store.deleteSecret(ref)
+          await deleteSecret(ref)
           logger?.warn?.(`discordAccounts.create: cleaned orphaned secret ${ref} after config failure`)
         } catch (cleanupErr) {
           logger?.warn?.(`discordAccounts.create: orphan cleanup failed for ${ref}: ${cleanupErr}`)
@@ -300,8 +349,8 @@ export function createDiscordAccountsService(deps) {
     }
 
     let secretDeleted = false
-    if (opts.deleteSecret && ref && secrets?.store?.deleteSecret) {
-      secretDeleted = await secrets.store.deleteSecret(ref)
+    if (opts.deleteSecret && ref && (typeof secrets?.delete === 'function' || secrets?.store?.deleteSecret)) {
+      secretDeleted = await deleteSecret(ref)
     }
 
     onConfigChanged(configStore.snapshot())
@@ -322,9 +371,6 @@ export function createDiscordAccountsService(deps) {
     const id = validateAccountId(accountId)
     const value = String(token || '')
     if (!value) throw new TypeError('token required')
-    if (!secrets?.store?.setSecret) {
-      throw new Error('secrets store unavailable')
-    }
 
     const data = configStore.snapshot()
     if (!data.accounts[id]) {
@@ -332,8 +378,8 @@ export function createDiscordAccountsService(deps) {
     }
     const ref = data.accounts[id].credentials || credentialSecretName(id)
 
-    // Upsert — previous value remains until this call succeeds
-    await secrets.store.setSecret(ref, value)
+    // Upsert via secrets.set — vault + store hot; previous value remains until success
+    await writeSecret(ref, value)
 
     // Ensure credentials ref persisted
     await configStore.withLock((d) => {
@@ -368,9 +414,6 @@ export function createDiscordAccountsService(deps) {
       throw Object.assign(new Error(`account not found: ${id}`), { code: 'not_found' })
     }
     const ref = acc.credentials || credentialSecretName(id)
-    if (!secrets?.store?.deleteSecret) {
-      throw new Error('secrets store unavailable')
-    }
 
     // Stop runtime first so we never login with empty credentials
     try {
@@ -381,7 +424,7 @@ export function createDiscordAccountsService(deps) {
       logger?.warn?.(`removeCredential stop: ${err}`)
     }
 
-    await secrets.store.deleteSecret(ref)
+    await deleteSecret(ref)
     onConfigChanged(configStore.snapshot())
     const pub = await toPublic(id, configStore.snapshot().accounts[id])
     return { ok: true, account: pub }

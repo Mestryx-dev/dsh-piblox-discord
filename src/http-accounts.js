@@ -1,7 +1,12 @@
 /**
  * Operator HTTP routes for Discord Settings (webServer).
  * Never log or return secret values.
+ *
+ * AUTH: PLUGIN_REQUIRED — webServer has no upstream admin auth for longer prefixes.
+ * Account/credential mutations require Connection.requestRejection; same-origin = CSRF.
  */
+
+import { rejectAdminRequest, sameOrigin } from './admin-auth.js'
 
 /** @typedef {import('./accounts-service.js').createDiscordAccountsService extends (...args: any) => infer R ? R : never} DiscordAccounts */
 
@@ -31,47 +36,37 @@ function readBody(req) {
   })
 }
 
-const LOOPBACK = /^(127\.0\.0\.1|\[::1\]|localhost)(:\d+)?$/i
-
 /**
- * @param {import('node:http').IncomingMessage} req
+ * Mutations that change account config or credentials.
+ * @param {string} method
+ * @param {string[]} parts
  */
-function sameOrigin(req) {
-  const host = String(req.headers.host || '')
-  if (!LOOPBACK.test(host)) {
-    const origin = req.headers.origin
-    if (!origin) return true
-    try {
-      const oh = new URL(String(origin)).host
-      return oh === host || LOOPBACK.test(oh)
-    } catch {
-      return false
-    }
+function isMutation(method, parts) {
+  if (parts[0] !== 'accounts') return false
+  if (parts.length === 1 && method === 'POST') return true
+  if (parts.length === 2 && (method === 'PATCH' || method === 'PUT' || method === 'DELETE')) return true
+  if (parts.length === 3 && parts[2] === 'credential' && (method === 'POST' || method === 'DELETE')) {
+    return true
   }
-  const origin = req.headers.origin
-  if (!origin) return true
-  try {
-    return LOOPBACK.test(new URL(String(origin)).host)
-  } catch {
-    return false
-  }
+  return false
 }
 
 /**
- * @param {{ accounts: ReturnType<import('./accounts-service.js').createDiscordAccountsService>, uiEnabled?: boolean }} opts
+ * @param {{
+ *   accounts: ReturnType<import('./accounts-service.js').createDiscordAccountsService>,
+ *   uiEnabled?: boolean,
+ *   adminAuth?: { requestRejection(request: { headers: import('node:http').IncomingHttpHeaders }): 401 | 403 | undefined },
+ * }} opts
  */
 export function createDiscordHttpHandlers(opts) {
   const accounts = opts.accounts
   const uiEnabled = opts.uiEnabled !== false
+  const adminAuth = opts.adminAuth
 
   /** @type {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>} */
   const router = async (req, res) => {
     if (!uiEnabled) {
       json(res, 404, { ok: false, error: 'ui disabled' })
-      return
-    }
-    if (!sameOrigin(req)) {
-      json(res, 403, { ok: false, error: 'forbidden: cross-origin' })
       return
     }
 
@@ -81,6 +76,23 @@ export function createDiscordHttpHandlers(opts) {
     rest = rest.replace(/^\//, '')
     const method = req.method || 'GET'
     const parts = rest.split('/').filter(Boolean)
+
+    if (isMutation(method, parts)) {
+      const rejection = rejectAdminRequest(req, adminAuth)
+      if (rejection != null) {
+        const error =
+          rejection === 503
+            ? 'admin auth unavailable'
+            : rejection === 401
+              ? 'unauthorized'
+              : 'forbidden'
+        json(res, rejection, { ok: false, error })
+        return
+      }
+    } else if (!sameOrigin(req)) {
+      json(res, 403, { ok: false, error: 'forbidden: cross-origin' })
+      return
+    }
 
     try {
       if (parts[0] === 'meta' && (method === 'GET' || method === 'HEAD')) {
@@ -214,7 +226,7 @@ export function createDiscordHttpHandlers(opts) {
 
 /**
  * @param {{ register: Function } | undefined} webServer
- * @param {{ accounts: any, uiEnabled?: boolean }} opts
+ * @param {{ accounts: any, uiEnabled?: boolean, adminAuth?: any }} opts
  */
 export function registerDiscordHttpRoutes(webServer, opts) {
   if (!webServer) return

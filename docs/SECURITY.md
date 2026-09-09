@@ -41,22 +41,33 @@ Discord interaction ≠ authorization
 | Browser | write-only token field; after save shows Configured / Replace / Remove |
 | Process env | avoid materializing into `process.env` unless secrets policy allows |
 | Logs | never log tokens; canary tests assert absence |
-| Rotation | vault upsert; old value remains until upsert succeeds; Gateway restart later |
-| Removal | vault delete; account stays → `missing_credentials`; no empty login attempt |
+| Rotation | `secrets.set` upsert; vault hot; old value remains until upsert succeeds; Gateway restart later |
+| Removal | `secrets.delete`; account stays → `missing_credentials`; no empty login attempt |
 | Multi-account | one secret per account; compromise ≠ all accounts |
+| Hot-reload | `resolve()` sees create/rotate/delete immediately (no profile restart) |
 
 ### Forbidden storage
 
 Raw tokens must never appear in: cordis.patch.yml, accounts ledger, outbox, inbound dedupe,
 ConversationBinding, localStorage, observability payloads, Git, or model-facing tools.
 
-## 4. Allowlists & intents
+## 4. Operator HTTP auth (PLUGIN_REQUIRED)
+
+`dsh-host-webserver` has **no** server-wide authentication. Plugin routes under
+`/api/discord/*` and `/api/piblox-secrets/*` are longer prefixes and **bypass**
+Connection’s `/api` bridge. Therefore:
+
+- Mutations (account CRUD, credential write/delete) require `connection.requestRejection`
+- Fail closed (503) when Connection is unavailable
+- Same-origin remains CSRF defense only — never sole protection for credential CRUD
+
+## 5. Allowlists & intents
 
 - Guild / channel / user allowlists (**LOCKED** fail-closed: `[]` = deny all).
 - Privileged intents labeled in Settings; defaults least-privilege.
 - Bot Discord permissions least-privilege per account role.
 
-## 5. DSH permissions vs Discord permissions
+## 6. DSH permissions vs Discord permissions
 
 | Layer | Question |
 |---|---|
@@ -65,13 +76,13 @@ ConversationBinding, localStorage, observability payloads, Git, or model-facing 
 | DSH policy | May this **agent/tool/action** run? |
 | Domain policy | Is this maintenance/ops action allowed now? |
 
-## 6. Agent boundary
+## 7. Agent boundary
 
 `discordAccounts` / credential ops are **operator admin only** — not model tools.
 
 Agent tools remain semantic (`discord.message.send`), never `discord.authenticate(token)`.
 
-## 7. Audit & redaction
+## 8. Audit & redaction
 
 - Public account objects pass canary leak asserts in tests.
 - Prefer content hashes in Core events; full text stays in session store as appropriate.

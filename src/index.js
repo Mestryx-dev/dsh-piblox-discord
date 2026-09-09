@@ -204,11 +204,16 @@ export function createDiscordProvider(deps, config = {}) {
       }
       const ref = account.credentials || credentialSecretName(accountId)
       let configured = true
-      if (deps.secrets?.store?.listNames) {
+      if (typeof deps.secrets?.hasKey === 'function') {
+        configured = deps.secrets.hasKey(ref)
+      } else if (typeof deps.secrets?.resolve === 'function') {
+        configured = Boolean(deps.secrets.resolve(ref)?.ok)
+      } else if (typeof deps.secrets?.listNames === 'function') {
+        const names = (await deps.secrets.listNames())?.names || []
+        configured = names.includes(ref)
+      } else if (deps.secrets?.store?.listNames) {
         const names = await deps.secrets.store.listNames()
         configured = names.includes(ref)
-      } else if (typeof deps.secrets?.hasKey === 'function') {
-        configured = deps.secrets.hasKey(ref)
       } else if (!account.credentials && !deps.secrets) {
         configured = true
       } else if (!account.credentials) {
@@ -233,11 +238,22 @@ export function createDiscordProvider(deps, config = {}) {
     const account = liveConfig.accounts[accountId]
     if (!account?.enabled) throw new Error(`account not enabled: ${accountId}`)
     const ref = account.credentials || credentialSecretName(accountId)
-    if (deps.secrets?.store?.listNames) {
+    let configured = true
+    if (typeof deps.secrets?.hasKey === 'function') {
+      configured = deps.secrets.hasKey(ref)
+    } else if (typeof deps.secrets?.resolve === 'function') {
+      configured = Boolean(deps.secrets.resolve(ref)?.ok)
+    } else if (typeof deps.secrets?.listNames === 'function') {
+      const names = (await deps.secrets.listNames())?.names || []
+      configured = names.includes(ref)
+    } else if (deps.secrets?.store?.listNames) {
       const names = await deps.secrets.store.listNames()
-      if (!names.includes(ref)) {
-        throw new Error(`missing_credentials: ${accountId}`)
-      }
+      configured = names.includes(ref)
+    } else if (!account.credentials) {
+      configured = false
+    }
+    if (!configured) {
+      throw new Error(`missing_credentials: ${accountId}`)
     }
     await transport.startAccount(accountId, { credentialsRef: ref })
     outbox?.clearAccountIsolation?.(accountId)
@@ -297,11 +313,33 @@ export function apply(ctx, config = {}) {
   if (typeof ctx.inject === 'function') {
     try {
       ctx.inject(['webServer'], (httpCtx) => {
-        const web = /** @type {any} */ (httpCtx).webServer
-        registerDiscordHttpRoutes(web, {
-          accounts: provider.accounts,
-          uiEnabled: config.uiEnabled !== false,
-        })
+        const scoped = /** @type {any} */ (httpCtx)
+        const web = scoped.webServer
+        const register = (adminAuth) => {
+          registerDiscordHttpRoutes(web, {
+            accounts: provider.accounts,
+            uiEnabled: config.uiEnabled !== false,
+            adminAuth,
+          })
+        }
+        if (typeof scoped.inject === 'function') {
+          try {
+            scoped.inject(['connection'], (cctx) => {
+              const connection = /** @type {any} */ (cctx).connection
+              const adminAuth =
+                connection && typeof connection.requestRejection === 'function'
+                  ? { requestRejection: connection.requestRejection.bind(connection) }
+                  : undefined
+              register(adminAuth)
+            })
+            return
+          } catch (err) {
+            ctx.logger?.warn?.(
+              `dsh-piblox-discord: connection inject skipped — ${err instanceof Error ? err.message : err}`,
+            )
+          }
+        }
+        register(undefined)
       })
     } catch (err) {
       ctx.logger?.warn?.(

@@ -123,7 +123,10 @@ describe('discord config plane', () => {
       allowAllGuilds: true,
       allowAllChannels: true,
     })
-    const [route] = createDiscordHttpHandlers({ accounts: provider.accounts })
+    const [route] = createDiscordHttpHandlers({
+      accounts: provider.accounts,
+      adminAuth: { requestRejection: () => undefined },
+    })
     const listed = await invokeDiscordHttp(route.handler, {
       method: 'GET',
       path: '/api/discord/accounts',
@@ -256,7 +259,10 @@ describe('discord config plane', () => {
   })
 
   it('HTTP create + credential delete round-trip', async () => {
-    const [route] = createDiscordHttpHandlers({ accounts: provider.accounts })
+    const [route] = createDiscordHttpHandlers({
+      accounts: provider.accounts,
+      adminAuth: { requestRejection: () => undefined },
+    })
     const created = await invokeDiscordHttp(route.handler, {
       method: 'POST',
       path: '/api/discord/accounts',
@@ -277,6 +283,83 @@ describe('discord config plane', () => {
     assert.equal(delCred.status, 200)
     assert.equal(delCred.data.account.status, 'missing_credentials')
     assertNoCanary(delCred.raw, 'HTTP delete credential')
+  })
+
+  it('HTTP mutation unauthorized without admin session', async () => {
+    const [route] = createDiscordHttpHandlers({
+      accounts: provider.accounts,
+      adminAuth: { requestRejection: () => 401 },
+    })
+    const created = await invokeDiscordHttp(route.handler, {
+      method: 'POST',
+      path: '/api/discord/accounts',
+      body: { account_id: 'lab', token: CANARY, allowAllGuilds: true, allowAllChannels: true },
+    })
+    assert.equal(created.status, 401)
+  })
+
+  it('HTTP mutation fails closed without adminAuth', async () => {
+    const [route] = createDiscordHttpHandlers({ accounts: provider.accounts })
+    const created = await invokeDiscordHttp(route.handler, {
+      method: 'POST',
+      path: '/api/discord/accounts',
+      body: { account_id: 'lab', token: CANARY, allowAllGuilds: true, allowAllChannels: true },
+    })
+    assert.equal(created.status, 503)
+  })
+
+  it('HTTP cross-origin mutation denied', async () => {
+    const [route] = createDiscordHttpHandlers({
+      accounts: provider.accounts,
+      adminAuth: { requestRejection: () => undefined },
+    })
+    const created = await invokeDiscordHttp(route.handler, {
+      method: 'POST',
+      path: '/api/discord/accounts',
+      headers: { origin: 'https://evil.example' },
+      body: { account_id: 'lab', token: CANARY, allowAllGuilds: true, allowAllChannels: true },
+    })
+    assert.equal(created.status, 403)
+  })
+})
+
+describe('secrets.set hot-reload via Discord accounts', () => {
+  it('create/rotate/delete visible through secrets.resolve immediately', async () => {
+    const { createSecretsForTest } = await import('../../dsh-piblox-secrets/dist/index.js')
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-discord-hot-'))
+    const secrets = createSecretsForTest({ dataDir: join(dir, 'secrets'), bootHosts: ['*'] })
+    await secrets.boot()
+    try {
+      delete process.env.DISCORD_LAB_BOT_TOKEN
+      const configStore = createAccountsConfigStore({ storePath: join(dir, 'accounts.json') })
+      await configStore.seedFromBootConfig({ accounts: {} })
+      const accounts = createDiscordAccountsService({ configStore, secrets })
+
+      assert.equal(secrets.resolve('DISCORD_LAB_BOT_TOKEN').ok, false)
+      await accounts.create({
+        accountId: 'lab',
+        token: CANARY,
+        allowAllGuilds: true,
+        allowAllChannels: true,
+      })
+      assert.equal(secrets.resolve('DISCORD_LAB_BOT_TOKEN').value, CANARY)
+      assert.notEqual(process.env.DISCORD_LAB_BOT_TOKEN, CANARY)
+
+      const rotated = 'ROTATED_CANARY_TOKEN_456'
+      await accounts.setCredential('lab', rotated)
+      assert.equal(secrets.resolve('DISCORD_LAB_BOT_TOKEN').value, rotated)
+      assert.notEqual(process.env.DISCORD_LAB_BOT_TOKEN, rotated)
+
+      const cfg = readFileSync(join(dir, 'accounts.json'), 'utf8')
+      assert.equal(cfg.includes(CANARY), false)
+      assert.equal(cfg.includes(rotated), false)
+
+      await accounts.removeCredential('lab')
+      assert.equal(secrets.resolve('DISCORD_LAB_BOT_TOKEN').ok, false)
+    } finally {
+      secrets.store.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

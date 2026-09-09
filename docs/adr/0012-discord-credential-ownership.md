@@ -10,6 +10,7 @@ outbox, dedupe, ConversationBinding, browser Settings responses, or logs.
 
 `dsh-piblox-secrets` already provides an embedded AES-256-GCM vault with:
 
+- `ctx.secrets.set` / `ctx.secrets.delete` (admin mutation — store + vault hot)
 - `POST /api/piblox-secrets` create-or-replace
 - `DELETE /api/piblox-secrets/:name`
 - `GET /api/piblox-secrets/names` (configured without value)

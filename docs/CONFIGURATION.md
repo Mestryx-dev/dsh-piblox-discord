@@ -84,12 +84,14 @@ Never returns `token`, materialized secrets, or canary values.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/discord/accounts` | List sanitized accounts |
-| POST | `/api/discord/accounts` | Create (+ optional token) |
-| PATCH | `/api/discord/accounts/:id` | Update config (no token) |
-| DELETE | `/api/discord/accounts/:id` | Delete config (`?deleteSecret=true` optional) |
-| POST | `/api/discord/accounts/:id/credential` | Set/replace token |
-| DELETE | `/api/discord/accounts/:id/credential` | Remove token |
+| POST | `/api/discord/accounts` | Create (+ optional token) — admin session required |
+| PATCH | `/api/discord/accounts/:id` | Update config (no token) — admin session required |
+| DELETE | `/api/discord/accounts/:id` | Delete config (`?deleteSecret=true` optional) — admin session required |
+| POST | `/api/discord/accounts/:id/credential` | Set/replace token — admin session required |
+| DELETE | `/api/discord/accounts/:id/credential` | Remove token — admin session required |
 | GET | `/api/discord/meta` | Intents catalog + fail-closed hints |
+
+**PLUGIN_HTTP_ADMIN_AUTH = PLUGIN_REQUIRED.** `dsh-host-webserver` has no server-wide auth; longer plugin prefixes bypass Connection’s `/api` bridge. Mutations use `ctx.connection.requestRejection` (fail closed 503 if Connection missing). Same-origin remains CSRF defense.
 
 ## Runtime status
 
@@ -106,17 +108,19 @@ Never returns `token`, materialized secrets, or canary values.
 
 | Change | Classification |
 |---|---|
-| Vault write (`setSecret`) | HOT_RELOAD_SUPPORTED (store immediate) |
+| Vault write (`secrets.set` / `secrets.delete`) | HOT_RELOAD_SUPPORTED (`resolve()` immediate) |
 | Apply token to live Gateway | ACCOUNT_RESTART_REQUIRED |
 | Accounts ledger mutation | HOT_RELOAD_SUPPORTED (in-process) |
 | Cordis patch seed only | PROFILE_RESTART_REQUIRED |
 
 ## Credentials (OBSERVED)
 
-- Write: `secrets.store.setSecret` / `POST /api/piblox-secrets` (create-or-replace)
-- Delete: `secrets.store.deleteSecret` / `DELETE /api/piblox-secrets/:name`
-- Resolve for live login (later): store `getSecretValue` or `secrets.resolve` after vault refresh
-- There is **no** `ctx.secrets.set()` — use store/HTTP admin plane
+- Write: `ctx.secrets.set(name, value)` (preferred) — encrypted store + in-memory vault atomically
+- Delete: `ctx.secrets.delete(name)`
+- Resolve for live login: `ctx.secrets.resolve(ref)` (no restart required after set/delete)
+- HTTP admin: `POST|DELETE /api/piblox-secrets` (also hot-updates vault)
+- Fallback: `secrets.store.*` for older secrets installs without `set`/`delete`
+- Never put tokens in `process.env` or Discord account config
 
 ## Fail-closed UI
 
