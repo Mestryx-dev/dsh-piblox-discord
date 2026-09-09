@@ -26,8 +26,8 @@ import { registerDiscordHttpRoutes } from './http-accounts.js'
 import { credentialSecretName } from './secret-ref.js'
 
 export const name = 'dsh-piblox-discord'
-/** Agents + conversationBinding required for the DSH bridge. */
-export const inject = ['conversationBinding', 'agents']
+/** Bridge + credential plane (ADR-0012) — secrets required for token write/resolve. */
+export const inject = ['conversationBinding', 'agents', 'secrets']
 
 export { FakeTransport, TransportError } from './transport/fake.js'
 export { DiscordJsTransport, normalizeMessageCreate, toDiscordMessageBody, LIVE_SMOKE_INTENT_IDS, resolveGatewayIntents } from './transport/discordjs.js'
@@ -319,12 +319,15 @@ export function createDiscordProvider(deps, config = {}) {
 export function apply(ctx, config = {}) {
   const conversationBinding = ctx.conversationBinding
   const agents = ctx.agents
+  const secrets = ctx.secrets
   if (!conversationBinding || !agents) {
     throw new Error('dsh-piblox-discord: requires conversationBinding and agents services')
   }
+  if (!secrets) {
+    throw new Error('dsh-piblox-discord: requires secrets service (dsh-piblox-secrets)')
+  }
 
   const get = (key) => (typeof ctx.get === 'function' ? ctx.get(key) : undefined)
-  const secrets = get('secrets') || undefined
   // Soft-resolve optional services — never access ctx.observability as a property
   // without inject (Cordis throws "cannot get property without inject").
   const observability = get('observability')

@@ -124,6 +124,8 @@ export function createDiscordHttpHandlers(opts) {
             allowAllGuilds: body.allowAllGuilds,
             allowedChannels: body.allowedChannels,
             allowAllChannels: body.allowAllChannels,
+            allowedUsers: body.allowedUsers,
+            allowAllUsers: body.allowAllUsers,
             dm: body.dm,
             ignoreBots: body.ignoreBots,
             proactiveTargets: body.proactiveTargets,
@@ -204,13 +206,21 @@ export function createDiscordHttpHandlers(opts) {
     } catch (err) {
       const code = err?.code
       const msg = err instanceof Error ? err.message : 'internal error'
-      // Never echo secret values
+      // Never echo secret values in the HTTP body
       if (code === 'duplicate') {
         json(res, 409, { ok: false, error: msg })
         return
       }
       if (code === 'not_found') {
         json(res, 404, { ok: false, error: msg })
+        return
+      }
+      if (code === 'secrets_unavailable') {
+        json(res, 503, { ok: false, error: 'secrets service unavailable' })
+        return
+      }
+      if (code === 'secrets_write_failed') {
+        json(res, 502, { ok: false, error: 'credential write failed' })
         return
       }
       if (err instanceof TypeError) {

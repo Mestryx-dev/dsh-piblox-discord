@@ -40,7 +40,7 @@ export function statusTone(status) {
 
 /**
  * Human label for scope_summary codes from the accounts API.
- * @param {'guilds'|'channels'|'dm'} kind
+ * @param {'guilds'|'channels'|'users'|'dm'} kind
  * @param {string | undefined} code
  */
 export function formatScopeLabel(kind, code) {

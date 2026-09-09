@@ -108,12 +108,14 @@ describe('DSH bridge', () => {
         enabled: true,
         allowAllGuilds: true,
         allowAllChannels: true,
+        allowAllUsers: true,
         dm: { enabled: true, allowAllUsers: true },
       },
       account_beta: {
         enabled: true,
         allowedGuilds: ['g-beta'],
         allowedChannels: ['c-beta'],
+        allowAllUsers: true,
       },
     })
     await ctx.provider.start()

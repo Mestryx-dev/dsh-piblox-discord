@@ -384,14 +384,17 @@ window.__ModuleLoader__.load({
         sectionIntents: "Gateway intents",
         sectionGuilds: "Guild access",
         sectionChannels: "Channel access",
+        sectionGuildUsers: "Guild users",
         sectionDm: "Direct messages",
         sectionBehavior: "Behavior",
         advancedIntents: "Advanced intents",
         allowAllGuilds: "Allow all guilds",
         allowAllChannels: "Allow all channels",
+        allowAllGuildUsers: "Allow all guild users",
         allowAllUsers: "Allow all DM users",
         allowedGuilds: "Allowed guild IDs",
         allowedChannels: "Allowed channel IDs",
+        allowedGuildUsers: "Allowed guild user IDs",
         dmEnabled: "Enable DMs",
         dmUsers: "Allowed DM user IDs",
         emptyDenyAll: "Empty list = deny all",
@@ -402,6 +405,7 @@ window.__ModuleLoader__.load({
         tokenLine: "Token",
         guildsLine: "Guilds",
         channelsLine: "Channels",
+        usersLine: "Users",
         dmsLine: "DMs",
         loading: "Loading…",
         error: "Something went wrong",
@@ -624,10 +628,14 @@ window.__ModuleLoader__.load({
       const [allowAllChannels, setAllowAllChannels] = useState(
         initial ? initial.allowAllChannels : false,
       );
+      const [allowAllGuildUsers, setAllowAllGuildUsers] = useState(
+        initial ? Boolean(initial.allowAllUsers) : false,
+      );
       const [guilds, setGuilds] = useState(listToLines(initial && initial.allowedGuilds));
       const [channels, setChannels] = useState(listToLines(initial && initial.allowedChannels));
+      const [guildUsers, setGuildUsers] = useState(listToLines(initial && initial.allowedUsers));
       const [dmEnabled, setDmEnabled] = useState(initial ? initial.dm && initial.dm.enabled : false);
-      const [allowAllUsers, setAllowAllUsers] = useState(
+      const [allowAllDmUsers, setAllowAllDmUsers] = useState(
         initial ? initial.dm && initial.dm.allowAllUsers : false,
       );
       const [dmUsers, setDmUsers] = useState(
@@ -666,12 +674,14 @@ window.__ModuleLoader__.load({
             intents: [...intents],
             allowAllGuilds,
             allowAllChannels,
+            allowAllUsers: allowAllGuildUsers,
             allowedGuilds: allowAllGuilds ? [] : linesToSnowflakes(guilds),
             allowedChannels: allowAllChannels ? [] : linesToSnowflakes(channels),
+            allowedUsers: allowAllGuildUsers ? [] : linesToSnowflakes(guildUsers),
             dm: {
               enabled: dmEnabled,
-              allowAllUsers: dmEnabled ? allowAllUsers : false,
-              allowedUsers: !dmEnabled || allowAllUsers ? [] : linesToSnowflakes(dmUsers),
+              allowAllUsers: dmEnabled ? allowAllDmUsers : false,
+              allowedUsers: !dmEnabled || allowAllDmUsers ? [] : linesToSnowflakes(dmUsers),
             },
             ignoreBots,
           };
@@ -938,6 +948,35 @@ window.__ModuleLoader__.load({
           }),
 
           jsx(Section, {
+            title: t("sectionGuildUsers"),
+            children: jsxs("div", {
+              style: { display: "flex", flexDirection: "column", gap: "0.55rem" },
+              children: [
+                jsx(Check, {
+                  id: baseId + "-all-guild-users",
+                  checked: allowAllGuildUsers,
+                  onChange: (ev) => setAllowAllGuildUsers(ev.target.checked),
+                  label: t("allowAllGuildUsers"),
+                }),
+                !allowAllGuildUsers
+                  ? jsx(Field, {
+                      id: baseId + "-guild-users",
+                      label: t("allowedGuildUsers"),
+                      hint: t("emptyDenyAll") + " · " + t("snowflakeHint"),
+                      children: jsx("textarea", {
+                        id: baseId + "-guild-users",
+                        value: guildUsers,
+                        onChange: (ev) => setGuildUsers(ev.target.value),
+                        rows: 3,
+                        style: css.textarea,
+                      }),
+                    })
+                  : null,
+              ],
+            }),
+          }),
+
+          jsx(Section, {
             title: t("sectionDm"),
             children: jsxs("div", {
               style: { display: "flex", flexDirection: "column", gap: "0.55rem" },
@@ -954,11 +993,11 @@ window.__ModuleLoader__.load({
                       children: [
                         jsx(Check, {
                           id: baseId + "-dm-all",
-                          checked: allowAllUsers,
-                          onChange: (ev) => setAllowAllUsers(ev.target.checked),
+                          checked: allowAllDmUsers,
+                          onChange: (ev) => setAllowAllDmUsers(ev.target.checked),
                           label: t("allowAllUsers"),
                         }),
-                        !allowAllUsers
+                        !allowAllDmUsers
                           ? jsx(Field, {
                               id: baseId + "-dm-users",
                               label: t("dmUsers"),
@@ -1067,6 +1106,8 @@ window.__ModuleLoader__.load({
               jsx("span", { children: formatScope("guilds", summary.guilds, t) }),
               jsx("span", { style: css.metaKey, children: t("channelsLine") }),
               jsx("span", { children: formatScope("channels", summary.channels, t) }),
+              jsx("span", { style: css.metaKey, children: t("usersLine") }),
+              jsx("span", { children: formatScope("users", summary.users, t) }),
               jsx("span", { style: css.metaKey, children: t("dmsLine") }),
               jsx("span", { children: formatScope("dm", summary.dm, t) }),
             ],

@@ -26,11 +26,13 @@ const ACCOUNTS = {
     enabled: true,
     allowAllGuilds: true,
     allowAllChannels: true,
+    allowAllUsers: true,
   },
   account_beta: {
     enabled: true,
     allowAllGuilds: true,
     allowAllChannels: true,
+    allowAllUsers: true,
   },
 }
 

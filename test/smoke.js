@@ -34,6 +34,7 @@ const provider = createDiscordProvider(
         enabled: true,
         allowAllGuilds: true,
         allowAllChannels: true,
+        allowAllUsers: true,
       },
     },
     outboxPath: join(dir, 'outbox.json'),

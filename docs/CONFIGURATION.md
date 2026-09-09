@@ -6,9 +6,10 @@
 
 1. **Multi-account first** — top-level `accounts` map; zero accounts = plugin idle.
 2. **No inline secrets** — only credential **references** resolved via `dsh-piblox-secrets`.
-3. **Allowlists default-deny** for guilds/channels unless explicitly opened.
+3. **Allowlists default-deny** for guilds / channels / guild users / DM users unless explicitly opened.
 4. **Account labels are opaque aliases** — not product branch names in code.
 5. **Dashboard config == runtime plugin config** — SSOT = `discord-accounts.json` ledger.
+6. **Guild user auth ≠ DM user auth** — top-level `allowAllUsers` / `allowedUsers` gate guild MESSAGE_CREATE; `dm.*` remains independent.
 
 ## Operator workflow (LOCKED)
 
@@ -56,12 +57,23 @@ discord:
       allow_all_guilds: false
       allowed_channels: []               # LOCKED: empty = deny all
       allow_all_channels: false
+      allowed_users: []                  # LOCKED: guild MESSAGE_CREATE users; empty = deny all
+      allow_all_users: false             # distinct from dm.allow_all_users
       dm:
         enabled: false
-        allowed_users: []                # LOCKED: empty = deny all
+        allowed_users: []                # LOCKED: empty = deny all (DM only)
         allow_all_users: false
       ignore_bots: true
 ```
+
+Guild MESSAGE_CREATE authorization order (LOCKED):
+
+```text
+account → guild → channel → guild user → bot rejection → dedupe → ConversationBinding / AgentLoop
+```
+
+Denied guild users never claim dedupe, create bindings, open sessions, follow up, or enqueue outbound.
+There is **no** Discord Administrator / permission-bit implicit bypass.
 
 ## Public Settings API (redacted)
 
@@ -73,7 +85,7 @@ discord:
   "enabled": true,
   "credentials": { "configured": true, "ref": "DISCORD_LAB_BOT_TOKEN" },
   "status": "stopped",
-  "scope_summary": { "guilds": "deny_all", "channels": "deny_all", "dm": "disabled" }
+  "scope_summary": { "guilds": "deny_all", "channels": "deny_all", "users": "deny_all", "dm": "disabled" }
 }
 ```
 

@@ -370,9 +370,10 @@ describe('fail-closed allowlists (config plane)', () => {
     const open = normalizeAccountConfig({
       allowAllGuilds: true,
       allowAllChannels: true,
+      allowAllUsers: true,
       dm: { enabled: true, allowAllUsers: true },
     })
-    assert.equal(authorizeInbound(open, { guildId: 'x', channelId: 'y' }).ok, true)
+    assert.equal(authorizeInbound(open, { guildId: 'x', channelId: 'y', userId: 'u' }).ok, true)
     const dmClosed = normalizeAccountConfig({ dm: { enabled: true, allowedUsers: [] } })
     assert.equal(authorizeInbound(dmClosed, { isDm: true, userId: SF_U }).reason, 'dm_users_deny_all')
   })

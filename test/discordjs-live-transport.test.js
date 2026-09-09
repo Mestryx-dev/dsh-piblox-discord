@@ -226,6 +226,8 @@ describe('DiscordJsTransport live seam (mocked)', () => {
           allowedGuilds: ['333'],
           allowAllChannels: false,
           allowedChannels: ['222'],
+          allowAllUsers: true,
+          allowedUsers: [],
           dm: { enabled: false, allowAllUsers: false, allowedUsers: [] },
           ignoreBots: true,
         },

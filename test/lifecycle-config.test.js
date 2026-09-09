@@ -16,7 +16,7 @@ import { join } from 'node:path'
 describe('plugin lifecycle', () => {
   it('exports Cordis name and inject contract', () => {
     assert.equal(name, 'dsh-piblox-discord')
-    assert.deepEqual(inject, ['conversationBinding', 'agents'])
+    assert.deepEqual(inject, ['conversationBinding', 'agents', 'secrets'])
   })
 
   it('loads and unloads with zero accounts', async () => {
@@ -54,11 +54,13 @@ describe('plugin lifecycle', () => {
               enabled: true,
               allowAllGuilds: true,
               allowAllChannels: true,
+              allowAllUsers: true,
             },
             account_beta: {
               enabled: true,
               allowAllGuilds: true,
               allowAllChannels: true,
+              allowAllUsers: true,
             },
           },
           outboxPath: join(dir, 'outbox.json'),
@@ -88,6 +90,15 @@ describe('config allowlists (LOCKED fail-closed)', () => {
     const withGuild = normalizeAccountConfig({ allowedGuilds: ['g1'] })
     assert.equal(authorizeInbound(withGuild, { guildId: 'g1', channelId: 'c1' }).reason, 'channels_deny_all')
 
+    const withChannel = normalizeAccountConfig({
+      allowedGuilds: ['g1'],
+      allowedChannels: ['c1'],
+    })
+    assert.equal(
+      authorizeInbound(withChannel, { guildId: 'g1', channelId: 'c1', userId: 'u1' }).reason,
+      'guild_users_deny_all',
+    )
+
     const dm = normalizeAccountConfig({ dm: { enabled: true, allowedUsers: [] } })
     assert.equal(authorizeInbound(dm, { isDm: true, userId: 'u1' }).reason, 'dm_users_deny_all')
   })
@@ -96,29 +107,50 @@ describe('config allowlists (LOCKED fail-closed)', () => {
     const account = normalizeAccountConfig({
       allowAllGuilds: true,
       allowAllChannels: true,
+      allowAllUsers: true,
       dm: { enabled: true, allowAllUsers: true },
     })
-    assert.equal(authorizeInbound(account, { guildId: 'any', channelId: 'any' }).ok, true)
+    assert.equal(authorizeInbound(account, { guildId: 'any', channelId: 'any', userId: 'u' }).ok, true)
     assert.equal(authorizeInbound(account, { isDm: true, userId: 'any' }).ok, true)
   })
 
   it('isolates account configs', () => {
     const cfg = normalizePluginConfig({
       accounts: {
-        account_alpha: { allowedGuilds: ['g-a'], allowedChannels: ['c-a'] },
-        account_beta: { allowedGuilds: ['g-b'], allowedChannels: ['c-b'] },
+        account_alpha: {
+          allowedGuilds: ['g-a'],
+          allowedChannels: ['c-a'],
+          allowAllUsers: true,
+        },
+        account_beta: {
+          allowedGuilds: ['g-b'],
+          allowedChannels: ['c-b'],
+          allowAllUsers: true,
+        },
       },
     })
     assert.equal(
-      authorizeInbound(cfg.accounts.account_alpha, { guildId: 'g-a', channelId: 'c-a' }).ok,
+      authorizeInbound(cfg.accounts.account_alpha, {
+        guildId: 'g-a',
+        channelId: 'c-a',
+        userId: 'u',
+      }).ok,
       true,
     )
     assert.equal(
-      authorizeInbound(cfg.accounts.account_alpha, { guildId: 'g-b', channelId: 'c-b' }).ok,
+      authorizeInbound(cfg.accounts.account_alpha, {
+        guildId: 'g-b',
+        channelId: 'c-b',
+        userId: 'u',
+      }).ok,
       false,
     )
     assert.equal(
-      authorizeInbound(cfg.accounts.account_beta, { guildId: 'g-b', channelId: 'c-b' }).ok,
+      authorizeInbound(cfg.accounts.account_beta, {
+        guildId: 'g-b',
+        channelId: 'c-b',
+        userId: 'u',
+      }).ok,
       true,
     )
   })

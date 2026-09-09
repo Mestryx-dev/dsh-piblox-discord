@@ -140,17 +140,19 @@ export class DiscordSessionBridge {
     if (!this.transport.isAccountRunning(event.accountId)) {
       return { ok: false, reason: 'account_stopped' }
     }
-    if (account.ignoreBots !== false && event.isBot) {
-      return { ok: false, reason: 'ignored_bot' }
-    }
     if (typeof event.content !== 'string') {
       return { ok: false, reason: 'malformed_event' }
     }
 
-    // authorize before claim (storage hygiene — denied events never enter durable dedupe)
+    // authorize before bot / claim (denied events never enter durable dedupe)
+    // Order: account → guild → channel → guild user (see authorizeInbound)
     const auth = authorizeInbound(account, event)
     if (!auth.ok) {
       return { ok: false, reason: auth.reason }
+    }
+
+    if (account.ignoreBots !== false && event.isBot) {
+      return { ok: false, reason: 'ignored_bot' }
     }
 
     const { eventId, eventType } = inboundEventKey(event)

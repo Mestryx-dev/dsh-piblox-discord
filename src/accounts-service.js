@@ -62,7 +62,9 @@ export function createDiscordAccountsService(deps) {
     if (typeof secrets?.set === 'function') {
       const result = await secrets.set(ref, value)
       if (!result?.ok) {
-        throw new Error(result?.message || result?.code || 'secrets.set failed')
+        throw Object.assign(new Error(result?.code || 'secrets.set failed'), {
+          code: 'secrets_write_failed',
+        })
       }
       return
     }
@@ -70,7 +72,9 @@ export function createDiscordAccountsService(deps) {
       await secrets.store.setSecret(ref, value)
       return
     }
-    throw new Error('secrets service unavailable — cannot write Discord token')
+    throw Object.assign(new Error('secrets service unavailable — cannot write Discord token'), {
+      code: 'secrets_unavailable',
+    })
   }
 
   /**
@@ -81,14 +85,16 @@ export function createDiscordAccountsService(deps) {
     if (typeof secrets?.delete === 'function') {
       const result = await secrets.delete(ref)
       if (!result?.ok) {
-        throw new Error(result?.message || result?.code || 'secrets.delete failed')
+        throw Object.assign(new Error(result?.code || 'secrets.delete failed'), {
+          code: 'secrets_write_failed',
+        })
       }
       return Boolean(result.deleted)
     }
     if (secrets?.store?.deleteSecret) {
       return secrets.store.deleteSecret(ref)
     }
-    throw new Error('secrets service unavailable')
+    throw Object.assign(new Error('secrets service unavailable'), { code: 'secrets_unavailable' })
   }
 
   async function listSecretNames() {
@@ -172,6 +178,8 @@ export function createDiscordAccountsService(deps) {
       allowAllGuilds: Boolean(account.allowAllGuilds),
       allowedChannels: [...(account.allowedChannels || [])],
       allowAllChannels: Boolean(account.allowAllChannels),
+      allowedUsers: [...(account.allowedUsers || [])],
+      allowAllUsers: Boolean(account.allowAllUsers),
       dm: {
         enabled: Boolean(account.dm?.enabled),
         allowedUsers: [...(account.dm?.allowedUsers || [])],
@@ -226,6 +234,7 @@ export function createDiscordAccountsService(deps) {
   function validateOperatorIds(input) {
     if (input.allowedGuilds != null) normalizeSnowflakeList(input.allowedGuilds, 'allowedGuilds')
     if (input.allowedChannels != null) normalizeSnowflakeList(input.allowedChannels, 'allowedChannels')
+    if (input.allowedUsers != null) normalizeSnowflakeList(input.allowedUsers, 'allowedUsers')
     if (input.dm?.allowedUsers != null) {
       normalizeSnowflakeList(input.dm.allowedUsers, 'dm.allowedUsers')
     }
@@ -242,6 +251,8 @@ export function createDiscordAccountsService(deps) {
    *   allowAllGuilds?: boolean,
    *   allowedChannels?: string[],
    *   allowAllChannels?: boolean,
+   *   allowedUsers?: string[],
+   *   allowAllUsers?: boolean,
    *   dm?: any,
    *   ignoreBots?: boolean,
    *   proactiveTargets?: any,
@@ -267,6 +278,8 @@ export function createDiscordAccountsService(deps) {
       allowAllGuilds: input.allowAllGuilds,
       allowedChannels: input.allowedChannels,
       allowAllChannels: input.allowAllChannels,
+      allowedUsers: input.allowedUsers,
+      allowAllUsers: input.allowAllUsers,
       dm: input.dm,
       ignoreBots: input.ignoreBots,
       proactiveTargets: input.proactiveTargets,
@@ -501,6 +514,7 @@ export function createDiscordAccountsService(deps) {
       fail_closed: {
         allowedGuilds_empty: 'deny_all',
         allowedChannels_empty: 'deny_all',
+        allowedUsers_empty: 'deny_all',
         dm_allowedUsers_empty: 'deny_all',
       },
     }

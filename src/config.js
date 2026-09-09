@@ -27,6 +27,8 @@ import { normalizeIntents } from './intents.js'
  *   allowedChannels?: string[],
  *   allowAllGuilds?: boolean,
  *   allowAllChannels?: boolean,
+ *   allowedUsers?: string[],
+ *   allowAllUsers?: boolean,
  *   dm?: DmConfig,
  *   ignoreBots?: boolean,
  *   proactiveTargets?: Record<string, { guildId?: string, channelId?: string }>,
@@ -50,6 +52,8 @@ export const DEFAULT_ACCOUNT = Object.freeze({
   allowedChannels: [],
   allowAllGuilds: false,
   allowAllChannels: false,
+  allowedUsers: [],
+  allowAllUsers: false,
   dm: Object.freeze({
     enabled: false,
     allowedUsers: [],
@@ -103,6 +107,10 @@ export function normalizeAccountConfig(raw = {}) {
     intents,
     allowAllGuilds: Boolean(raw.allowAllGuilds),
     allowAllChannels: Boolean(raw.allowAllChannels),
+    allowedUsers: Array.isArray(raw.allowedUsers)
+      ? raw.allowedUsers.map(String)
+      : [...DEFAULT_ACCOUNT.allowedUsers],
+    allowAllUsers: Boolean(raw.allowAllUsers),
     dm: {
       enabled: Boolean(dm.enabled),
       allowedUsers: Array.isArray(dm.allowedUsers) ? dm.allowedUsers.map(String) : [],
@@ -147,6 +155,13 @@ export function normalizePluginConfig(raw = {}) {
 
 /**
  * Fail-closed allowlist evaluation (LOCKED).
+ *
+ * Guild MESSAGE_CREATE order (bot rejection / dedupe live in the bridge after this):
+ *   account → guild → channel → guild user
+ *
+ * DM policy is independent (dm.enabled / dm.allowAllUsers / dm.allowedUsers).
+ * No Discord Administrator / permission-bit implicit bypass.
+ *
  * @param {ReturnType<typeof normalizeAccountConfig>} account
  * @param {{ guildId?: string, channelId?: string, userId?: string, isDm?: boolean }} event
  * @returns {{ ok: true } | { ok: false, reason: string }}
@@ -166,7 +181,7 @@ export function authorizeInbound(account, event) {
     if (!account.dm.allowedUsers.length) {
       return { ok: false, reason: 'dm_users_deny_all' }
     }
-    if (!event.userId || !account.dm.allowedUsers.includes(event.userId)) {
+    if (!event.userId || !account.dm.allowedUsers.includes(String(event.userId))) {
       return { ok: false, reason: 'dm_user_denied' }
     }
     return { ok: true }
@@ -176,7 +191,7 @@ export function authorizeInbound(account, event) {
     if (!account.allowedGuilds.length) {
       return { ok: false, reason: 'guilds_deny_all' }
     }
-    if (!event.guildId || !account.allowedGuilds.includes(event.guildId)) {
+    if (!event.guildId || !account.allowedGuilds.includes(String(event.guildId))) {
       return { ok: false, reason: 'guild_denied' }
     }
   }
@@ -185,8 +200,18 @@ export function authorizeInbound(account, event) {
     if (!account.allowedChannels.length) {
       return { ok: false, reason: 'channels_deny_all' }
     }
-    if (!event.channelId || !account.allowedChannels.includes(event.channelId)) {
+    if (!event.channelId || !account.allowedChannels.includes(String(event.channelId))) {
       return { ok: false, reason: 'channel_denied' }
+    }
+  }
+
+  // Guild user allowlist — distinct from dm.allowedUsers / dm.allowAllUsers
+  if (!account.allowAllUsers) {
+    if (!account.allowedUsers.length) {
+      return { ok: false, reason: 'guild_users_deny_all' }
+    }
+    if (!event.userId || !account.allowedUsers.includes(String(event.userId))) {
+      return { ok: false, reason: 'guild_user_denied' }
     }
   }
 
@@ -209,6 +234,11 @@ export function scopeSummary(account) {
       : account.allowedChannels.length === 0
         ? 'deny_all'
         : `${account.allowedChannels.length}`,
+    users: account.allowAllUsers
+      ? 'all'
+      : account.allowedUsers.length === 0
+        ? 'deny_all'
+        : `${account.allowedUsers.length}`,
     dm: !account.dm.enabled
       ? 'disabled'
       : account.dm.allowAllUsers
