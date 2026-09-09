@@ -1,6 +1,6 @@
 # dsh-piblox-discord
 
-**STATUS: V1 TRANSPORT CLOSURE PASS (FakeTransport) / LIVE_DISCORD_READY=YES (dev-bot only, not prod)**
+**STATUS: V1 TRANSPORT + CONFIG PLANE PASS / LIVE_DISCORD_CREDENTIAL_READY=YES (dev token next, not prod)**
 
 First-party Cordis / DeepSeek Harness (DSH) **generic Discord provider**.
 
@@ -9,6 +9,7 @@ Proven without live Discord:
 - inbound → authorize → dedupe → ConversationBinding → agents → **DeliveryOutbox** → FakeTransport
 - Durable outbox with 429/Retry-After, crash recovery, multi-step groups
 - Inbound message/interaction dedupe with TTL + lease reclaim
+- **Settings → Discord** account CRUD; tokens in **dsh-piblox-secrets** only
 
 ```bash
 npm test
@@ -17,7 +18,17 @@ npm run smoke
 
 Pinned client: **`discord.js@14.27.0`** (skeleton only — no live connect).  
 Outbox ledger (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-outbox.json`  
-Inbound dedupe (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-inbound-dedupe.json`
+Inbound dedupe (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-inbound-dedupe.json`  
+Accounts config (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-accounts.json`
+
+### Operator config
+
+```text
+Settings → Discord → Add account → paste bot token → Save
+  → DISCORD_<ACCOUNT_ID>_BOT_TOKEN in dsh-piblox-secrets
+Settings → Secrets  (generic vault UI)
+```
+
 
 ## What
 

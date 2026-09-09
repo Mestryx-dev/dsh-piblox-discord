@@ -1,11 +1,13 @@
 # Architecture — dsh-piblox-discord
 
-**STATUS:** V1 TRANSPORT PATH IMPLEMENTED (FakeTransport) / LIVE GATEWAY NOT ACTIVATED  
-**Labels:** LOCKED intents from mission; OBSERVED DSH seams; IMPLEMENTED plugin reliability path.
+**STATUS:** V1 TRANSPORT + CONFIG PLANE IMPLEMENTED (FakeTransport) / LIVE GATEWAY NOT ACTIVATED  
+**Labels:** LOCKED intents from mission; OBSERVED DSH seams; IMPLEMENTED reliability + operator Settings.
 
 **LOCKED:** Modern Discord API / Components V2 baseline (ADR-0007) — Discord HTTP **`v10`**, **`discord.js` 14.x** direction, Components V2 as first-class transport/render primitive.
 
 **LOCKED:** `ALL_NORMAL_OUTBOUND_VIA_OUTBOX` — bridge + `messages` API enqueue only; transport writes are outbox-worker / test-only.
+
+**LOCKED:** Credential ownership = **dsh-piblox-secrets** (ADR-0012). Account config SSOT = plugin `discord-accounts.json` ledger (Cordis patch is boot seed only).
 
 ## 1. Logical stack
 

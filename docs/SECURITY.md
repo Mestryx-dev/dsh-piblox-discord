@@ -1,6 +1,6 @@
 # Security — dsh-piblox-discord
 
-**STATUS:** DESIGN / NOT IMPLEMENTED
+**STATUS:** IMPLEMENTED (credential plane) / LIVE GATEWAY NOT ACTIVATED
 
 ## 1. Trust boundaries
 
@@ -18,7 +18,7 @@ policy engine               ← authorization SSOT for tools
 domain plugin / consumer
     ↓
 executor                    ← side effects
-credential store (secrets)  ← token vault
+dsh-piblox-secrets          ← token vault SSOT (LOCKED — ADR-0012)
 ```
 
 ## 2. Core axiom (LOCKED)
@@ -31,25 +31,29 @@ Discord interaction ≠ authorization
 > Compromise of the Discord bot token must not automatically grant authorization
 > to domain executors.
 
-A stolen token can spam channels or click-looking traffic into DSH as **input**.
-Destructive domain actions still require `dsh-policy-engine` AUTO/APPROVAL paths
-and domain checks.
-
-## 3. Token & credential handling
+## 3. Token & credential handling (LOCKED)
 
 | Rule | Detail |
 |---|---|
-| Storage | OBSERVED `secrets` vault (`dsh-piblox-secrets`) |
-| Config | credential **references** only |
-| Process env | avoid materializing into `process.env` unless explicitly allowed by secrets policy |
-| Logs | redaction via observability patterns; never log Authorization headers |
-| Rotation | account restart after vault update; no token in git |
-| Multi-account | compromise of one token ≠ all accounts (isolate credentials) |
+| Storage | **dsh-piblox-secrets** only (ADR-0012) |
+| Config | credential **references** only (`DISCORD_<ID>_BOT_TOKEN`) |
+| Settings API | `credentials.configured` boolean; optional admin `ref`; **never** value |
+| Browser | write-only token field; after save shows Configured / Replace / Remove |
+| Process env | avoid materializing into `process.env` unless secrets policy allows |
+| Logs | never log tokens; canary tests assert absence |
+| Rotation | vault upsert; old value remains until upsert succeeds; Gateway restart later |
+| Removal | vault delete; account stays → `missing_credentials`; no empty login attempt |
+| Multi-account | one secret per account; compromise ≠ all accounts |
+
+### Forbidden storage
+
+Raw tokens must never appear in: cordis.patch.yml, accounts ledger, outbox, inbound dedupe,
+ConversationBinding, localStorage, observability payloads, Git, or model-facing tools.
 
 ## 4. Allowlists & intents
 
 - Guild / channel / user allowlists (**LOCKED** fail-closed: `[]` = deny all).
-- Privileged intents (e.g. Message Content) only when required.
+- Privileged intents labeled in Settings; defaults least-privilege.
 - Bot Discord permissions least-privilege per account role.
 
 ## 5. DSH permissions vs Discord permissions
@@ -61,39 +65,13 @@ and domain checks.
 | DSH policy | May this **agent/tool/action** run? |
 | Domain policy | Is this maintenance/ops action allowed now? |
 
-All four can deny. Discord allow ≠ DSH allow.
+## 6. Agent boundary
 
-## 6. Policy gates for tools
+`discordAccounts` / credential ops are **operator admin only** — not model tools.
 
-- `discord.*` mutating tools: policy-evaluated via `tools/pre-execute` (OBSERVED).
-- `discord.admin.*`: high risk (L3/L4 PROPOSED), audit required.
-- Buttons that mean “approve reboot” must emit an **ApprovalIntent** to the
-  domain/policy path — never call an executor from the Discord plugin.
+Agent tools remain semantic (`discord.message.send`), never `discord.authenticate(token)`.
 
 ## 7. Audit & redaction
 
-- Mutating admin tools: mandatory audit fields (actor, account, targets, reason).
-- Observability redacts token-like values (OBSERVED).
+- Public account objects pass canary leak asserts in tests.
 - Prefer content hashes in Core events; full text stays in session store as appropriate.
-
-## 8. Unsafe admin actions
-
-Explicitly dangerous: ban, kick, delete channel, permission edit, role assign with
-admin privileges. Require APPROVAL or hard DENY in compiled policy until operators
-open them.
-
-## 9. Compromise scenarios
-
-| Scenario | Impact | Mitigation |
-|---|---|---|
-| Bot token leaked | Attacker acts as bot on Discord; can inject messages/interactions into DSH as input | Rotate token; allowlists; policy still gates executors |
-| Malicious Discord user | Prompt injection / social engineering via messages | Treat as untrusted text; no ambient admin |
-| Plugin RCE | Full DSH seat risk | Normal host hardening; secrets break-glass controls |
-| Confused deputy (button) | UI suggests power the bot lacks in policy | custom_id → intent only; policy re-check |
-
-## 10. Forbidden patterns
-
-- Inline `DISCORD_BOT_TOKEN` in repo or examples with real values
-- `if` product branches that embed domain authorization in Core
-- Parallel approval stores that skip `ctx.approval` / policy park path
-- Singleton shared token across unrelated trust domains without isolation

@@ -1,131 +1,131 @@
 # Configuration — dsh-piblox-discord
 
-**STATUS:** DESIGN / NOT IMPLEMENTED  
-Schema is **PROPOSED**. Credential mechanism is **OBSERVED** (`secrets` service).
+**STATUS:** IMPLEMENTED (accounts ledger + Settings UI) / LIVE GATEWAY NOT ACTIVATED  
 
 ## Principles
 
 1. **Multi-account first** — top-level `accounts` map; zero accounts = plugin idle.
-2. **No inline secrets** — only credential **references** resolved via `secrets.resolve`.
+2. **No inline secrets** — only credential **references** resolved via `dsh-piblox-secrets`.
 3. **Allowlists default-deny** for guilds/channels unless explicitly opened.
 4. **Account labels are opaque aliases** — not product branch names in code.
+5. **Dashboard config == runtime plugin config** — SSOT = `discord-accounts.json` ledger.
 
-## Conceptual schema (PROPOSED)
+## Operator workflow (LOCKED)
 
-```yaml
-# Cordis plugin config block (illustrative — not live)
-discord:
-  # Optional plugin-wide defaults
-  defaults:
-    chunk_limit: 2000
-    mention_parse: none
-    outbound:
-      max_attempts: 8
-      base_backoff_ms: 500
-    inbound:
-      dedupe_ttl_hours: 72
+```text
+Settings → Discord → Add account → paste bot token → Save
+  → token stored by dsh-piblox-secrets as DISCORD_<ACCOUNT_ID>_BOT_TOKEN
+  → account config stores only the reference
 
-  accounts:
-    # Labels are config aliases only (examples, not Core branches)
-    account_alpha:
-      enabled: true
-      credentials: DISCORD_BOT_TOKEN_ALPHA   # secrets vault key name
-      intents:
-        - Guilds
-        - GuildMessages
-        - GuildMessageReactions
-        - DirectMessages
-        - MessageContent                 # privileged — enable only if required
-      allowed_guilds:
-        - "123456789012345678"
-      allowed_channels: []               # LOCKED: empty = deny all channels
-      allow_all_guilds: false            # explicit opt-in for unrestricted guilds
-      allow_all_channels: false          # explicit opt-in for unrestricted channels
-      denied_channels: []
-      dm:
-        enabled: true
-        allowed_users: []                # LOCKED: empty = deny all DM users
-        allow_all_users: false           # explicit opt-in
-      bindings:
-        - kind: dm
-          # uses ConversationBinding keys — see DSH-INTEGRATION.md
-        - kind: channel
-        - kind: thread
-      inbound:
-        require_mention_in_guild: true
-        ignore_bots: true
-      proactive_targets:
-        ops_channel:
-          guild_id: "123456789012345678"
-          channel_id: "234567890123456789"
-      routing:
-        # hints only — not dsh-router replacement
-        default_agent_alias: null
-      observability:
-        source_label: discord.account_alpha
-      # policy references stay at tool/risk registry level — not duplicated here
-
-    account_beta:
-      enabled: false
-      credentials: DISCORD_BOT_TOKEN_BETA
-      intents:
-        - Guilds
-        - GuildMessages
-        - DirectMessages
-      allowed_guilds: []
-      bindings: []
-      proactive_targets: {}
+Settings → Secrets
+  → generic vault UI (unchanged)
 ```
 
-## Field notes
+Discord Settings is a **domain facade**, not a second vault.
 
-| Field | Required | Notes |
+## Secret references (LOCKED)
+
+Vault names must match `/^[A-Z][A-Z0-9_]*$/` (dsh-piblox-secrets constraint).
+
+| account_id | credentials ref |
+|---|---|
+| `lab` | `DISCORD_LAB_BOT_TOKEN` |
+| `infra` | `DISCORD_INFRA_BOT_TOKEN` |
+| `vega` | `DISCORD_VEGA_BOT_TOKEN` |
+
+`account_id` must match `/^[a-z][a-z0-9_]{0,47}$/`.
+
+## Conceptual schema
+
+```yaml
+# Cordis boot seed (optional) — runtime SSOT is the accounts ledger
+discord:
+  transport: fake  # or discordjs (skeleton; no live connect without authorize)
+  uiEnabled: true
+  accounts:
+    lab:
+      enabled: true
+      label: Lab bot
+      credentials: DISCORD_LAB_BOT_TOKEN   # reference only
+      intents:
+        - Guilds
+        - GuildMessages
+        - DirectMessages
+        - MessageContent                 # privileged — enable only if required
+      allowed_guilds: []                 # LOCKED: empty = deny all
+      allow_all_guilds: false
+      allowed_channels: []               # LOCKED: empty = deny all
+      allow_all_channels: false
+      dm:
+        enabled: false
+        allowed_users: []                # LOCKED: empty = deny all
+        allow_all_users: false
+      ignore_bots: true
+```
+
+## Public Settings API (redacted)
+
+`GET /api/discord/accounts` returns sanitized objects:
+
+```json
+{
+  "account_id": "lab",
+  "enabled": true,
+  "credentials": { "configured": true, "ref": "DISCORD_LAB_BOT_TOKEN" },
+  "status": "stopped",
+  "scope_summary": { "guilds": "deny_all", "channels": "deny_all", "dm": "disabled" }
+}
+```
+
+Never returns `token`, materialized secrets, or canary values.
+
+## Admin HTTP
+
+| Method | Path | Purpose |
 |---|---|---|
-| `account_id` (map key) | yes | Opaque label; encoded into ConversationBinding `scope` |
-| `credentials` | yes | Vault key; resolved via OBSERVED `secrets.resolve` |
-| `enabled` | yes | Soft disable without deleting config |
-| `intents` | yes | Least privilege per account |
-| `allowed_guilds` | yes | **LOCKED:** `[]` = deny all guilds |
-| `allow_all_guilds` | no | **LOCKED:** explicit opt-in unrestricted guilds |
-| `allowed_channels` / `denied_channels` | no | **LOCKED:** `allowed_channels: []` = deny all; `denied_channels` still deny listed IDs |
-| `allow_all_channels` | no | **LOCKED:** explicit opt-in unrestricted channels |
-| `dm.enabled` / `allowed_users` | no | **LOCKED:** `allowed_users: []` = deny all DM users (even if `dm.enabled: true`) |
-| `dm.allow_all_users` | no | **LOCKED:** explicit opt-in unrestricted DM users |
-| `bindings` | yes | Which conversation kinds create bindings |
-| `inbound.*` | no | Mention gates, bot ignore |
-| `proactive_targets` | no | Named aliases for notifications |
-| `routing.default_agent_alias` | no | Consumer hint only |
-| `observability.source_label` | no | Appears in emit meta/payload |
+| GET | `/api/discord/accounts` | List sanitized accounts |
+| POST | `/api/discord/accounts` | Create (+ optional token) |
+| PATCH | `/api/discord/accounts/:id` | Update config (no token) |
+| DELETE | `/api/discord/accounts/:id` | Delete config (`?deleteSecret=true` optional) |
+| POST | `/api/discord/accounts/:id/credential` | Set/replace token |
+| DELETE | `/api/discord/accounts/:id/credential` | Remove token |
+| GET | `/api/discord/meta` | Intents catalog + fail-closed hints |
+
+## Runtime status
+
+| Status | Meaning |
+|---|---|
+| `disabled` | `enabled: false` |
+| `missing_credentials` | No vault entry for credentials ref |
+| `stopped` | Enabled + credentials; transport not started |
+| `disconnected` | Transport started; **no** live Gateway session |
+| `connected` | Live Gateway only (not faked) |
+| `failed_auth` | Account isolated after auth failure |
+
+## Reload classification
+
+| Change | Classification |
+|---|---|
+| Vault write (`setSecret`) | HOT_RELOAD_SUPPORTED (store immediate) |
+| Apply token to live Gateway | ACCOUNT_RESTART_REQUIRED |
+| Accounts ledger mutation | HOT_RELOAD_SUPPORTED (in-process) |
+| Cordis patch seed only | PROFILE_RESTART_REQUIRED |
 
 ## Credentials (OBSERVED)
 
-- Store tokens in `dsh-piblox-secrets` vault (or seat jumelage later).
-- Plugin boots account only if `resolve(credentials).ok`.
-- Never log token values; rely on observability redaction patterns.
-- Invalid token → account state `failed_auth` (see STATE-RELIABILITY) without crashing other accounts.
+- Write: `secrets.store.setSecret` / `POST /api/piblox-secrets` (create-or-replace)
+- Delete: `secrets.store.deleteSecret` / `DELETE /api/piblox-secrets/:name`
+- Resolve for live login (later): store `getSecretValue` or `secrets.resolve` after vault refresh
+- There is **no** `ctx.secrets.set()` — use store/HTTP admin plane
 
-## What is not configuration
+## Fail-closed UI
 
-- Compiled policy risk for `discord.*` tools → `dsh-policy-engine` / registries
-- Session store path → ConversationBinding config
-- Discord Application creation in Developer Portal → operator runbook (future)
+Empty allowlist text boxes mean **deny all**. Broad access requires explicit checkboxes:
 
-## Allowlist empty-list semantics (LOCKED)
+- Allow all guilds
+- Allow all channels
+- Allow all DM users
 
-Fail-closed. Empty allowlists **deny all** traffic for that dimension:
+## Ledger path
 
-| Field | Empty list means |
-|---|---|
-| `allowed_guilds: []` | deny all guilds |
-| `allowed_channels: []` | deny all channels |
-| `allowed_users: []` | deny all DM users |
-
-Wildcard / broad access requires **explicit opt-in fields** (to be named in the
-implementation Config schema — e.g. `allow_all_guilds: true`). Do **not** treat
-`[]` as “unrestricted”.
-
-## OPEN
-
-1. Exact Cordis `Config` / Schemastery shape for the plugin package (including
-   explicit opt-in field names for broad access).
-2. Privileged intent documentation for operators (Message Content).
+Default: `~/dsh-lab/runtime/dsh-home/ledger/discord-accounts.json`

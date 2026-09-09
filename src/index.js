@@ -2,9 +2,10 @@
  * dsh-piblox-discord — generic first-party Discord provider for DSH.
  *
  * Cordis service key: `discord` (plugin-owned API surface).
- * Transport: FakeTransport (spike) | DiscordJsTransport skeleton (no live connect).
+ * Admin: `discord.accounts` + HTTP `/api/discord/*` (not model tools).
  *
  * ALL_NORMAL_OUTBOUND_VIA_OUTBOX = LOCKED
+ * Credential ownership = dsh-piblox-secrets (LOCKED)
  */
 
 import { normalizePluginConfig } from './config.js'
@@ -16,6 +17,13 @@ import { FakeClock, SystemClock } from './clock.js'
 import { createInboundDedupe, defaultInboundDedupePath } from './inbound-dedupe.js'
 import { createOutboundApi } from './outbound-api.js'
 import { defaultOutboxPath } from './outbox/store.js'
+import {
+  createAccountsConfigStore,
+  defaultAccountsConfigPath,
+} from './accounts-config-store.js'
+import { createDiscordAccountsService } from './accounts-service.js'
+import { registerDiscordHttpRoutes } from './http-accounts.js'
+import { credentialSecretName } from './secret-ref.js'
 
 export const name = 'dsh-piblox-discord'
 /** Agents + conversationBinding required for the DSH bridge. */
@@ -28,6 +36,7 @@ export {
   normalizePluginConfig,
   normalizeAccountConfig,
   authorizeInbound,
+  scopeSummary,
   DEFAULT_CONFIG,
   DEFAULT_ACCOUNT,
 } from './config.js'
@@ -42,6 +51,22 @@ export { classifyTransportError, computeBackoffMs, nonceFromOperationId } from '
 export { createInboundDedupe, defaultInboundDedupePath, inboundEventKey } from './inbound-dedupe.js'
 export { createOutboundApi } from './outbound-api.js'
 export { mapDiscordJsError, toClassifiableError } from './discord-errors.js'
+export {
+  credentialSecretName,
+  validateAccountId,
+  ACCOUNT_ID_RE,
+  isSnowflakeString,
+  normalizeSnowflakeList,
+} from './secret-ref.js'
+export { INTENT_OPTIONS, INTENT_IDS, normalizeIntents } from './intents.js'
+export { createAccountsConfigStore, defaultAccountsConfigPath } from './accounts-config-store.js'
+export { createDiscordAccountsService } from './accounts-service.js'
+export {
+  createDiscordHttpHandlers,
+  registerDiscordHttpRoutes,
+  invokeDiscordHttp,
+  API_PREFIX as DISCORD_API_PREFIX,
+} from './http-accounts.js'
 
 /**
  * Build plugin runtime without Cordis (tests / embedding).
@@ -49,15 +74,18 @@ export { mapDiscordJsError, toClassifiableError } from './discord-errors.js'
  * @param {import('./config.js').PluginConfig & {
  *   outboxPath?: string,
  *   inboundDedupePath?: string,
+ *   accountsConfigPath?: string,
  *   inboundDedupeTtlMs?: number,
  *   inboundDedupeLeaseMs?: number,
  * }} [config]
  */
 export function createDiscordProvider(deps, config = {}) {
-  const cfg = normalizePluginConfig(config)
+  const bootCfg = normalizePluginConfig(config)
   const transport =
     deps.transport ||
-    (cfg.transport === 'discordjs' ? new DiscordJsTransport({ allowConnect: false }) : new FakeTransport())
+    (bootCfg.transport === 'discordjs'
+      ? new DiscordJsTransport({ allowConnect: false })
+      : new FakeTransport())
 
   const clock = deps.clock || new SystemClock()
   const outboxPath = config.outboxPath || deps.outboxPath || defaultOutboxPath()
@@ -88,6 +116,16 @@ export function createDiscordProvider(deps, config = {}) {
     throw new Error('createDiscordProvider: DeliveryOutbox is required for normal outbound paths')
   }
 
+  const accountsConfigPath =
+    config.accountsConfigPath || deps.accountsConfigPath || defaultAccountsConfigPath()
+  const accountsConfigStore =
+    deps.accountsConfigStore ||
+    createAccountsConfigStore({ storePath: accountsConfigPath })
+
+  // Mutable runtime config — SSOT is the accounts ledger (seeded from Cordis boot once).
+  /** @type {{ transport: string, accounts: Record<string, any> }} */
+  let liveConfig = { transport: bootCfg.transport, accounts: { ...bootCfg.accounts } }
+
   const messages = createOutboundApi({ outbox })
 
   const bridge = new DiscordSessionBridge({
@@ -96,7 +134,7 @@ export function createDiscordProvider(deps, config = {}) {
     transport,
     outbox,
     inboundDedupe,
-    accounts: cfg.accounts,
+    accounts: liveConfig.accounts,
     observability: deps.observability,
     createUserMessage: deps.createUserMessage,
     onSessionEvent: deps.onSessionEvent,
@@ -104,60 +142,108 @@ export function createDiscordProvider(deps, config = {}) {
     logger: deps.logger,
   })
 
+  /** @type {any} */
   const api = {
-    config: cfg,
+    config: liveConfig,
     transport,
     bridge,
     outbox,
     clock,
     inboundDedupe,
-    /** Future tools: discord.message.send|reply|edit */
+    accountsConfigStore,
     messages,
-    /**
-     * Drain due outbox ops (tests / controlled flush).
-     * @param {{ maxRounds?: number, accountId?: string }} [opts]
-     */
-    async drainOutbound(opts = {}) {
-      const maxRounds = opts.maxRounds ?? 30
-      let total = 0
-      for (let i = 0; i < maxRounds; i++) {
-        const { processed } = await outbox.tick({ accountId: opts.accountId })
-        total += processed
-        if (processed === 0) break
+  }
+
+  function applyLiveConfig(next) {
+    liveConfig = {
+      transport: next.transport || liveConfig.transport,
+      accounts: { ...(next.accounts || {}) },
+    }
+    for (const key of Object.keys(bridge.accounts)) {
+      if (!(key in liveConfig.accounts)) delete bridge.accounts[key]
+    }
+    Object.assign(bridge.accounts, liveConfig.accounts)
+    api.config = liveConfig
+  }
+
+  const discordAccounts = createDiscordAccountsService({
+    configStore: accountsConfigStore,
+    secrets: deps.secrets || null,
+    transport,
+    outbox,
+    logger: deps.logger,
+    onConfigChanged: applyLiveConfig,
+    liveGatewayConnected: deps.liveGatewayConnected,
+  })
+
+  api.accounts = discordAccounts
+  api.discordAccounts = discordAccounts
+  api.drainOutbound = async function drainOutbound(opts = {}) {
+    const maxRounds = opts.maxRounds ?? 30
+    let total = 0
+    for (let i = 0; i < maxRounds; i++) {
+      const { processed } = await outbox.tick({ accountId: opts.accountId })
+      total += processed
+      if (processed === 0) break
+    }
+    return { processed: total }
+  }
+  api.start = async function start() {
+    await accountsConfigStore.seedFromBootConfig(bootCfg)
+    applyLiveConfig(accountsConfigStore.snapshot())
+
+    if (outbox?.recoverOnLoad) {
+      await outbox.recoverOnLoad()
+    }
+    bridge.start()
+
+    for (const [accountId, account] of Object.entries(liveConfig.accounts)) {
+      if (!account.enabled) continue
+      if (liveConfig.transport === 'discordjs') {
+        continue
       }
-      return { processed: total }
-    },
-    async start() {
-      if (outbox?.recoverOnLoad) {
-        await outbox.recoverOnLoad()
+      const ref = account.credentials || credentialSecretName(accountId)
+      let configured = true
+      if (deps.secrets?.store?.listNames) {
+        const names = await deps.secrets.store.listNames()
+        configured = names.includes(ref)
+      } else if (typeof deps.secrets?.hasKey === 'function') {
+        configured = deps.secrets.hasKey(ref)
+      } else if (!account.credentials && !deps.secrets) {
+        configured = true
+      } else if (!account.credentials) {
+        configured = false
       }
-      bridge.start()
-      for (const [accountId, account] of Object.entries(cfg.accounts)) {
-        if (!account.enabled) continue
-        if (cfg.transport === 'discordjs') {
-          // Skeleton refuses live connect — skip starting live accounts in spike.
-          continue
-        }
-        await transport.startAccount(accountId, { credentialsRef: account.credentials })
+      if (!configured) {
+        deps.logger?.info?.(`discord: skip start ${accountId} (missing_credentials)`)
+        continue
       }
-    },
-    async stop() {
-      bridge.stop()
-      for (const accountId of Object.keys(cfg.accounts)) {
-        if (transport.isAccountRunning(accountId)) {
-          await transport.stopAccount(accountId)
-        }
+      await transport.startAccount(accountId, { credentialsRef: ref })
+    }
+  }
+  api.stop = async function stop() {
+    bridge.stop()
+    for (const accountId of Object.keys(liveConfig.accounts)) {
+      if (transport.isAccountRunning(accountId)) {
+        await transport.stopAccount(accountId)
       }
-    },
-    async startAccount(accountId) {
-      const account = cfg.accounts[accountId]
-      if (!account?.enabled) throw new Error(`account not enabled: ${accountId}`)
-      await transport.startAccount(accountId, { credentialsRef: account.credentials })
-      outbox?.clearAccountIsolation?.(accountId)
-    },
-    async stopAccount(accountId) {
-      await transport.stopAccount(accountId)
-    },
+    }
+  }
+  api.startAccount = async function startAccount(accountId) {
+    const account = liveConfig.accounts[accountId]
+    if (!account?.enabled) throw new Error(`account not enabled: ${accountId}`)
+    const ref = account.credentials || credentialSecretName(accountId)
+    if (deps.secrets?.store?.listNames) {
+      const names = await deps.secrets.store.listNames()
+      if (!names.includes(ref)) {
+        throw new Error(`missing_credentials: ${accountId}`)
+      }
+    }
+    await transport.startAccount(accountId, { credentialsRef: ref })
+    outbox?.clearAccountIsolation?.(accountId)
+  }
+  api.stopAccount = async function stopAccount(accountId) {
+    await transport.stopAccount(accountId)
   }
 
   return api
@@ -175,14 +261,17 @@ export function apply(ctx, config = {}) {
     throw new Error('dsh-piblox-discord: requires conversationBinding and agents services')
   }
 
+  const get = (key) => (typeof ctx.get === 'function' ? ctx.get(key) : undefined)
+  const secrets = get('secrets') || undefined
+
   const provider = createDiscordProvider(
     {
       conversationBinding,
       agents,
+      secrets,
       observability: ctx.observability,
       createUserMessage: ctx.createUserMessage,
       onSessionEvent: (sessionId, listener) => {
-        // Cordis root session/event bus — filter by session id when available.
         return ctx.on('session/event', (session, event) => {
           const sid = String(session?.id ?? session?.sessionId ?? '')
           if (sid && sid !== String(sessionId)) return
@@ -202,6 +291,25 @@ export function apply(ctx, config = {}) {
   })
 
   ctx.provide('discord', provider)
+  // Admin surface alias (not registered as model tools)
+  ctx.provide('discordAccounts', provider.accounts)
+
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['webServer'], (httpCtx) => {
+        const web = /** @type {any} */ (httpCtx).webServer
+        registerDiscordHttpRoutes(web, {
+          accounts: provider.accounts,
+          uiEnabled: config.uiEnabled !== false,
+        })
+      })
+    } catch (err) {
+      ctx.logger?.warn?.(
+        `dsh-piblox-discord: webServer inject skipped — ${err instanceof Error ? err.message : err}`,
+      )
+    }
+  }
+
   ctx.logger?.info?.(
     `dsh-piblox-discord: loaded transport=${provider.config.transport} accounts=${Object.keys(provider.config.accounts).length}`,
   )

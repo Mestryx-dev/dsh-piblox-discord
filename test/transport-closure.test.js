@@ -82,6 +82,7 @@ function setup(extra = {}) {
       accounts: ACCOUNTS,
       outboxPath: join(dir, 'outbox.json'),
       inboundDedupePath: join(dir, 'inbound-dedupe.json'),
+      accountsConfigPath: join(dir, 'discord-accounts.json'),
       inboundDedupeTtlMs: extra.ttlMs ?? 60_000,
       inboundDedupeLeaseMs: extra.leaseMs ?? 5_000,
     },

@@ -38,6 +38,7 @@ const provider = createDiscordProvider(
     },
     outboxPath: join(dir, 'outbox.json'),
     inboundDedupePath: join(dir, 'inbound-dedupe.json'),
+    accountsConfigPath: join(dir, 'discord-accounts.json'),
   },
 )
 
