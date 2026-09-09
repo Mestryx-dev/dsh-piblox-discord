@@ -9,6 +9,8 @@ import { normalizePluginConfig } from './config.js'
 import { FakeTransport } from './transport/fake.js'
 import { DiscordJsTransport } from './transport/discordjs.js'
 import { DiscordSessionBridge } from './bridge.js'
+import { createDeliveryOutbox } from './outbox/index.js'
+import { FakeClock, SystemClock } from './clock.js'
 
 export const name = 'dsh-piblox-discord'
 /** Agents + conversationBinding required for the DSH bridge. */
@@ -27,17 +29,35 @@ export {
 export { buildBindingIdentity, toExternalIdentity } from './binding.js'
 export { createDiscordUserMessage, buildFollowupMessage } from './message-source.js'
 export { COMPONENT_KINDS, isComponentNode } from './types.js'
+export { createDeliveryOutbox } from './outbox/index.js'
+export { createOutboxStore, defaultOutboxPath } from './outbox/store.js'
+export { toReceipt } from './outbox/types.js'
+export { FakeClock, SystemClock } from './clock.js'
+export { classifyTransportError, computeBackoffMs, nonceFromOperationId } from './errors.js'
 
 /**
  * Build plugin runtime without Cordis (tests / embedding).
  * @param {object} deps
- * @param {import('./config.js').PluginConfig} [config]
+ * @param {import('./config.js').PluginConfig & { outboxPath?: string }} [config]
  */
 export function createDiscordProvider(deps, config = {}) {
   const cfg = normalizePluginConfig(config)
   const transport =
     deps.transport ||
     (cfg.transport === 'discordjs' ? new DiscordJsTransport({ allowConnect: false }) : new FakeTransport())
+
+  const clock = deps.clock || new SystemClock()
+  const outbox =
+    deps.outbox ||
+    (deps.outbox === null
+      ? null
+      : createDeliveryOutbox({
+          transport,
+          storePath: config.outboxPath || deps.outboxPath,
+          clock,
+          observability: deps.observability,
+          retry: deps.retry,
+        }))
 
   const bridge = new DiscordSessionBridge({
     conversationBinding: deps.conversationBinding,
@@ -54,7 +74,12 @@ export function createDiscordProvider(deps, config = {}) {
     config: cfg,
     transport,
     bridge,
+    outbox,
+    clock,
     async start() {
+      if (outbox?.recoverOnLoad) {
+        await outbox.recoverOnLoad()
+      }
       bridge.start()
       for (const [accountId, account] of Object.entries(cfg.accounts)) {
         if (!account.enabled) continue
@@ -77,6 +102,7 @@ export function createDiscordProvider(deps, config = {}) {
       const account = cfg.accounts[accountId]
       if (!account?.enabled) throw new Error(`account not enabled: ${accountId}`)
       await transport.startAccount(accountId, { credentialsRef: account.credentials })
+      outbox?.clearAccountIsolation?.(accountId)
     },
     async stopAccount(accountId) {
       await transport.stopAccount(accountId)

@@ -1,5 +1,6 @@
 /**
  * Deterministic FakeTransport — no network, no tokens.
+ * Extended for reliability: Retry-After metadata, nonce/enforce_nonce, ambiguous timeout.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -8,14 +9,25 @@ import { randomUUID } from 'node:crypto'
  * @typedef {import('../types.js').OutboundMessage} OutboundMessage
  * @typedef {import('../types.js').SentMessage} SentMessage
  * @typedef {import('../types.js').PlatformEvent} PlatformEvent
- * @typedef {import('../types.js').SimulatedFailure} SimulatedFailure
  * @typedef {import('./transport.js').InboundHandler} InboundHandler
  * @typedef {import('./transport.js').DiscordTransport} DiscordTransport
  */
 
+/**
+ * @typedef {'429'|'5xx'|'timeout'|'permission'|'auth'|'invalid_payload'|'unknown_target'|'network'} SimulatedFailureCode
+ */
+
+/**
+ * @typedef {{
+ *   code: SimulatedFailureCode,
+ *   retryAfterMs?: number,
+ *   applyDespiteFailure?: boolean,
+ * }} SimulatedFailureSpec
+ */
+
 export class TransportError extends Error {
   /**
-   * @param {SimulatedFailure} code
+   * @param {string} code
    * @param {string} [message]
    * @param {{ retryAfterMs?: number }} [extra]
    */
@@ -36,19 +48,24 @@ export class FakeTransport {
     this.running = new Set()
     /** @type {InboundHandler[]} */
     this.handlers = []
-    /** @type {Array<SentMessage & { op: 'send'|'reply'|'edit', payload: OutboundMessage }>} */
+    /** @type {Array<SentMessage & { op: string, payload: OutboundMessage }>} */
     this.outbound = []
-    /** @type {Map<string, SimulatedFailure>} */
-    this.nextFailureByAccount = new Map()
+    /** @type {Map<string, SimulatedFailureSpec[]>} */
+    this.failureQueues = new Map()
+    /** @type {Map<string, { messageId: string, content: string, channelId: string }>} */
+    this.nonceIndex = new Map()
     this._seq = 0
   }
 
   /**
    * @param {string} accountId
-   * @param {SimulatedFailure} code
+   * @param {SimulatedFailureCode | SimulatedFailureSpec} failure
    */
-  simulateNextFailure(accountId, code) {
-    this.nextFailureByAccount.set(accountId, code)
+  simulateNextFailure(accountId, failure) {
+    const spec = typeof failure === 'string' ? { code: failure } : { ...failure }
+    const q = this.failureQueues.get(accountId) || []
+    q.push(spec)
+    this.failureQueues.set(accountId, q)
   }
 
   /** @param {string} accountId */
@@ -76,7 +93,6 @@ export class FakeTransport {
   }
 
   /**
-   * Inject a normalized inbound message event.
    * @param {Omit<PlatformEvent, 'type'> & { type?: 'discord.message.created' }} partial
    */
   async injectMessage(partial) {
@@ -97,29 +113,79 @@ export class FakeTransport {
 
   /**
    * @param {string} accountId
+   * @returns {SimulatedFailureSpec | null}
+   */
+  _takeFailure(accountId) {
+    const q = this.failureQueues.get(accountId)
+    if (!q || q.length === 0) return null
+    const spec = q.shift()
+    if (q.length === 0) this.failureQueues.delete(accountId)
+    else this.failureQueues.set(accountId, q)
+    return spec || null
+  }
+
+  /**
+   * @param {SimulatedFailureSpec} spec
+   */
+  _throwFailure(spec) {
+    if (spec.code === '429') {
+      throw new TransportError('429', 'rate limited', {
+        retryAfterMs: spec.retryAfterMs ?? 1000,
+      })
+    }
+    if (spec.code === '5xx') {
+      throw new TransportError('5xx', 'upstream 503')
+    }
+    if (spec.code === 'timeout') {
+      throw new TransportError('timeout', 'request timed out')
+    }
+    if (spec.code === 'network') {
+      throw new TransportError('connection_reset', 'ECONNRESET')
+    }
+    if (spec.code === 'auth') {
+      throw new TransportError('auth', 'invalid token')
+    }
+    if (spec.code === 'invalid_payload') {
+      throw new TransportError('invalid_payload', 'invalid payload')
+    }
+    if (spec.code === 'unknown_target') {
+      throw new TransportError('unknown_target', 'unknown channel')
+    }
+    throw new TransportError('permission', 'missing permissions')
+  }
+
+  /**
+   * @param {string} accountId
    * @param {string} channelId
    * @param {OutboundMessage} payload
-   * @param {'send'|'reply'|'edit'} op
+   * @param {string} op
    * @param {string} [messageId]
    */
   async _outbound(accountId, channelId, payload, op, messageId) {
     if (!this.running.has(accountId)) {
       throw new TransportError('permission', `account not running: ${accountId}`)
     }
-    const fail = this.nextFailureByAccount.get(accountId)
-    if (fail) {
-      this.nextFailureByAccount.delete(accountId)
-      if (fail === '429') {
-        throw new TransportError('429', 'rate limited', { retryAfterMs: 1000 })
+
+    // Create Message nonce / enforce_nonce semantics (Fake model of Discord).
+    if (op === 'send' && payload.nonce && payload.enforceNonce) {
+      const prior = this.nonceIndex.get(payload.nonce)
+      if (prior) {
+        if (prior.content === String(payload.content || '') && prior.channelId === channelId) {
+          return {
+            accountId,
+            channelId,
+            messageId: prior.messageId,
+            guildId: undefined,
+            threadId: undefined,
+          }
+        }
+        throw new TransportError('nonce_conflict', 'enforce_nonce conflict')
       }
-      if (fail === '5xx') {
-        throw new TransportError('5xx', 'upstream 503')
-      }
-      if (fail === 'timeout') {
-        throw new TransportError('timeout', 'request timed out')
-      }
-      throw new TransportError('permission', 'missing permissions')
     }
+
+    const fail = this._takeFailure(accountId)
+    const applyDespite = Boolean(fail?.applyDespiteFailure)
+
     const sent = {
       accountId,
       channelId,
@@ -127,7 +193,31 @@ export class FakeTransport {
       guildId: undefined,
       threadId: undefined,
     }
+
+    if (fail && applyDespite) {
+      this.outbound.push({ ...sent, op, payload: structuredClone(payload) })
+      if (op === 'send' && payload.nonce) {
+        this.nonceIndex.set(payload.nonce, {
+          messageId: sent.messageId,
+          content: String(payload.content || ''),
+          channelId,
+        })
+      }
+      this._throwFailure(fail)
+    }
+
+    if (fail) {
+      this._throwFailure(fail)
+    }
+
     this.outbound.push({ ...sent, op, payload: structuredClone(payload) })
+    if (op === 'send' && payload.nonce) {
+      this.nonceIndex.set(payload.nonce, {
+        messageId: sent.messageId,
+        content: String(payload.content || ''),
+        channelId,
+      })
+    }
     return sent
   }
 
@@ -144,5 +234,34 @@ export class FakeTransport {
   /** @type {DiscordTransport['editMessage']} */
   editMessage(accountId, channelId, messageId, payload) {
     return this._outbound(accountId, channelId, payload, 'edit', messageId)
+  }
+
+  /**
+   * Minimal thread create for multi-step groups (Fake only).
+   * @param {string} accountId
+   * @param {string} parentChannelId
+   * @param {{ name?: string, messageId?: string }} opts
+   */
+  async createThread(accountId, parentChannelId, opts = {}) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    const fail = this._takeFailure(accountId)
+    if (fail) this._throwFailure(fail)
+    const threadId = `thread_${randomUUID().slice(0, 8)}`
+    const sent = {
+      accountId,
+      channelId: threadId,
+      messageId: opts.messageId || `thread_root_${++this._seq}`,
+      guildId: undefined,
+      threadId,
+      id: threadId,
+    }
+    this.outbound.push({
+      ...sent,
+      op: 'createThread',
+      payload: { content: opts.name || 'thread', raw: { parentChannelId } },
+    })
+    return sent
   }
 }

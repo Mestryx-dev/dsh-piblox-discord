@@ -36,6 +36,7 @@ export class DiscordJsTransport {
 
   /**
    * Type/compile smoke: ensure Client + GatewayIntentBits exist.
+   * Also verify reliability-relevant APIs exist for the live phase (DESIGNED_FOR_LIVE).
    * Never logs in.
    */
   async validateDependency() {
@@ -46,11 +47,29 @@ export class DiscordJsTransport {
     if (!djs.GatewayIntentBits) {
       throw new Error('discord.js GatewayIntentBits missing')
     }
+    // RateLimitError / DiscordAPIError surface Retry-After / status for outbox classification.
+    const hasRateLimitError = typeof djs.RateLimitError === 'function' || typeof djs.DiscordAPIError === 'function'
     return {
       package: 'discord.js',
-      // Version resolved at install time — read from package.json of dependency.
       hasClient: true,
       hasGatewayIntentBits: true,
+      hasRateLimitErrorSurface: hasRateLimitError,
+      supportsNonceEnforceNonce: true, // Create Message body fields; live REST will pass through OutboundMessage
+      restCalls: 0,
+    }
+  }
+
+  /**
+   * Document how live REST errors will feed the outbox scheduler later.
+   * No network I/O.
+   */
+  describeReliabilityContract() {
+    return {
+      rateLimit: 'Map DiscordAPIError/RateLimitError status 429 + retryAfter → TransportError(429, {retryAfterMs})',
+      restErrors: '5xx → retryable; 401 → auth isolate account; 403/404 → terminal domain',
+      resourceIds: 'Returned message/channel/thread snowflakes become discord_resource_id',
+      nonce: 'OutboundMessage.nonce + enforceNonce forwarded on Create Message',
+      live: false,
     }
   }
 

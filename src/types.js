@@ -64,7 +64,7 @@
 
 /**
  * Simulated transport failure kinds for FakeTransport hooks.
- * @typedef {'429'|'5xx'|'timeout'|'permission'} SimulatedFailure
+ * @typedef {'429'|'5xx'|'timeout'|'permission'|'auth'|'invalid_payload'|'unknown_target'|'network'} SimulatedFailure
  */
 
 /**

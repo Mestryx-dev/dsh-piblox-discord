@@ -1,7 +1,9 @@
 # State & reliability — dsh-piblox-discord
 
-**STATUS:** DESIGN / NOT IMPLEMENTED  
-State ownership mixes **OBSERVED** Core owners and **PROPOSED** plugin transport state.
+**STATUS:** IMPLEMENTED + TESTED (FakeTransport) / DESIGNED_FOR_LIVE (discord.js REST headers)  
+**NOT_LIVE_TESTED:** real Discord rate-limit buckets / Gateway
+
+State ownership mixes **OBSERVED** Core owners and **IMPLEMENTED** plugin transport state.
 
 ## 1. State ownership table
 
@@ -10,114 +12,101 @@ State ownership mixes **OBSERVED** Core owners and **PROPOSED** plugin transport
 | Discord account configuration | Plugin config / profile | yes (config files) | Operator-owned |
 | Bot token values | `dsh-piblox-secrets` (`secrets`) | yes | OBSERVED credential SSOT |
 | Conversation ↔ session binding | `conversationBinding` | yes | OBSERVED — **no parallel store** |
-| Discord channel/thread/message IDs | Discord + event payloads / outbox refs | ephemeral + refs in outbox | Platform truth is Discord |
-| Outbound delivery jobs | Plugin outbox | **yes (PROPOSED)** | Survive crash mid-send |
-| Create Message `nonce` map | Plugin outbox index | yes | Discord-native idempotency (`enforce_nonce`); **no** HTTP Idempotency-Key |
-| Durable operation IDs (non-create-message) | Plugin outbox index | yes | Reconcile with returned Discord resource IDs |
-| Inbound event dedupe window | Plugin dedupe store | yes (TTL) | Prevent double session prompts |
-| Interaction ack / follow-up state | Plugin (memory + durable if multi-step) | hybrid | Discord 3s window; follow-ups may outlive process |
-| Application command registration state | Plugin / Discord Application | yes (Discord + local cache) | CHAT_INPUT / USER / MESSAGE; avoid re-register storms |
-| Rate-limit bucket state | Plugin REST layer | memory (+ optional durable) | Buckets are short-lived; durable optional |
-| Retry state | Plugin outbox | yes | Tied to delivery jobs |
-| Delivery receipts | Plugin → caller | yes (job record) | Consumer confirmation |
-| Correlation IDs | `observability` | memory bind + JSONL events | OBSERVED |
+| Discord channel/thread/message IDs | Discord + outbox `discord_resource_id` | ephemeral + refs | Platform truth is Discord |
+| Outbound delivery jobs | Plugin outbox (`discord-outbox.json`) | **yes (IMPLEMENTED)** | Survive crash mid-send |
+| Create Message `nonce` map | Outbox op + FakeTransport nonce index | yes | Discord-native idempotency (`enforce_nonce`) |
+| Durable operation IDs | Outbox `operation_id` | yes | Dedupe + receipts |
+| Multi-step delivery groups | Outbox `groups` | yes | Atlas partial-thread prevention |
+| Inbound event dedupe window | Plugin dedupe store | PROPOSED | Prevent double session prompts |
+| Rate-limit bucket state | Live REST layer | DESIGNED_FOR_LIVE | Short-lived; outbox honors Retry-After today |
+| Retry state | Outbox | yes | Tied to delivery jobs |
+| Delivery receipts | Outbox → `toReceipt()` | yes | Consumer confirmation |
+| Correlation IDs | `observability` + outbox field | memory bind + JSONL | OBSERVED; no second scheme |
 | Session messages / agent turns | DSH session store | yes | Upstream |
-| Policy decisions / approvals | `policy` + approvals ledger / `ctx.approval` | yes | OBSERVED |
-| Domain executor state | Domain plugins | — | Out of scope |
+| Policy decisions / approvals | `policy` | yes | Outbox never bypasses policy |
 
 **LOCKED:** Do not create a second ConversationBinding / session map inside this plugin.
 
-## 2. Outbound state machine (PROPOSED)
+## 2. Outbound state machine (IMPLEMENTED)
 
 ```text
 accepted → queued → sending → delivered
-                 ↘ retry_wait → sending (loop)
+                 ↘ retry_wait → queued/sending (after next_attempt_at)
                  ↘ failed_terminal
 ```
 
 | State | Meaning |
 |---|---|
-| `accepted` | API/tool validated inputs; job persisted |
-| `queued` | Waiting for rate-limit slot / worker |
-| `sending` | REST v10 in flight |
-| `delivered` | Discord acknowledged (message id / resource id stored) |
-| `retry_wait` | Transient failure; backoff scheduled (`Retry-After` honored) |
+| `accepted` | Momentary; persisted immediately as `queued` |
+| `queued` | Waiting for scheduler / rate-limit slot |
+| `sending` | Transport call in flight (claimed under lock) |
+| `delivered` | Discord/Fake acknowledged; `discord_resource_id` stored |
+| `retry_wait` | Transient/ambiguous failure; `next_attempt_at` set |
 | `failed_terminal` | Non-retryable or attempts exhausted |
 
-### Create Message idempotency (LOCKED)
-
-For Discord **Create Message**:
-
-- Use a deterministic **`nonce`** derived from the durable operation identity.
-- Set **`enforce_nonce=true`** where applicable so Discord rejects duplicates.
-- Do **not** invent a generic Discord HTTP `Idempotency-Key` header.
-
-Other mutating operations use durable operation IDs + returned Discord resource IDs
-+ operation-specific reconciliation (not a fake global idempotency header).
-
-### Multi-step outbound groups (critical)
-
-Atlas failure mode to prevent:
+### Restart semantics (LOCKED)
 
 ```text
-create thread → message 1 → message 2 → HTTP 429 → process exit → partial thread
+sending → queued (next_attempt_at = now)
 ```
 
-**PROPOSED:** treat multi-step builds as an **outbox group** with group id:
+Never permanently strand operations in `sending` after `recoverOnLoad()`.
 
-1. Persist full plan before first Discord call.
-2. On resume, skip steps that already have Discord ids.
-3. Never mark group `delivered` until all required steps succeed or group is aborted with compensating action documented.
+### Create Message idempotency (LOCKED + TESTED)
 
-## 3. Interaction state machine (PROPOSED)
+- Deterministic **`nonce`** from `operation_id`
+- **`enforce_nonce=true`** on FakeTransport Create Message path
+- Duplicate `operation_id` enqueue returns existing receipt (no second job)
+- Ambiguous timeout with `applyDespiteFailure` + nonce → retry returns same resource (no duplicate)
+
+### Multi-step outbound groups (IMPLEMENTED + TESTED)
 
 ```text
-received → acknowledged → dispatched → completed
-                                   ↘ failed
+persist group + all steps before step 1
+→ execute first incomplete step only
+→ on deliver, unlock next step
+→ on restart, skip delivered steps; resume incomplete
 ```
 
-| State | Meaning |
-|---|---|
-| `received` | Interaction accepted (Gateway or HTTP endpoint); dedupe recorded |
-| `acknowledged` | Discord ack/defer within platform deadline |
-| `dispatched` | Intent handed to consumer / session / approval path |
-| `completed` | Follow-up response sent (legacy and/or Components V2) or intentionally silent |
-| `failed` | Acked but completion failed — may retry follow-up only |
+Atlas failure mode covered by `test/reliability.test.js` group case.
 
-Delivery mode must not change this state machine.
+## 3. Failure semantics (IMPLEMENTED classification)
 
-## 4. Failure semantics
-
-| Failure | Class | Behaviour (PROPOSED) |
+| Failure | Class | Behaviour |
 |---|---|---|
-| HTTP 429 + Retry-After | transport | `retry_wait`; honor header; do not drop job |
-| Transient 5xx | transport | backoff retry |
-| Network timeout | transport | retry with idempotency key |
-| Invalid token | transport/auth | account `failed_auth`; stop that account; alert |
-| Missing permission | domain/Discord | `failed_terminal` for that op; no blind retry loop |
-| Unknown channel / deleted thread | domain/Discord | terminal; unbind if conversation gone |
-| Invalid payload | domain | terminal validation error |
-| Duplicate inbound event | transport | ignore after dedupe hit |
-| Process crash | transport | reload durable outbox + incomplete groups |
-| Policy DENY | policy | not a transport retry — surface to caller |
-| DSH session errors | DSH | classify; may unbind+recreate per CB contract |
-| Approval deny/timeout | policy | consumer-visible; no executor call |
+| HTTP 429 + Retry-After | transport | `retry_wait`; honor `retryAfterMs`; FakeClock in tests |
+| Transient 5xx | transport | exponential backoff; max attempts → terminal |
+| Network timeout | transport / ambiguous | retry; nonce reconciliation for Create Message |
+| Invalid token | transport/auth | terminal; **isolate account**; others continue |
+| Missing permission | discord_domain | `failed_terminal`; no retry loop |
+| Unknown target / invalid payload | discord_domain | terminal |
+| Policy DENY | policy | not a transport retry (outbox must not re-authorize) |
 
 ### Class distinctions (LOCKED vocabulary)
 
 ```text
-transport failure  — Discord/network/rate-limit/plugin outbox
-domain failure     — bad Discord target / permissions / payload
-DSH failure        — session/router/agent/runtime errors
-policy denial      — evaluate/park path DENY or timeout
+transport_failure
+discord_domain_failure
+dsh_failure
+policy_denial
 ```
 
-## 5. FakeTransport (PROPOSED)
+## 4. Scheduler / clock
 
-Deterministic in-memory Discord double for unit tests:
+- `FakeClock.now()` / `advance(ms)` — tests (no real sleeps)
+- `SystemClock` — production
+- Per-account processing: alpha 429 does not block beta
 
-- records REST calls
-- can inject 429 / 5xx / timeout
-- no network, no tokens
+## 5. FakeTransport (IMPLEMENTED)
 
-Required in V1 design so reliability machines are testable without a live bot.
+- Records REST-like calls
+- Injects 429 (with Retry-After), 5xx, timeout, permission, auth, network
+- Ambiguous timeout via `applyDespiteFailure`
+- Nonce / `enforce_nonce` index
+- `createThread` for multi-step groups
+- No network, no tokens
+
+## 6. Observability
+
+Uses existing closed Core event types only (`tool.called` / `tool.returned` / `tool.failed`)
+with operation metadata. Does **not** extend EVENT_TYPES with `discord.*`.

@@ -1,19 +1,21 @@
 # dsh-piblox-discord
 
-**STATUS: V1 SPIKE IMPLEMENTED (FakeTransport) / NOT PRODUCTION-ACTIVATED**
+**STATUS: V1 SPIKE + RELIABILITY LAYER (FakeTransport) / NOT PRODUCTION-ACTIVATED**
 
 First-party Cordis / DeepSeek Harness (DSH) **generic Discord provider**.
 
-V1 spike proves FakeTransport → ConversationBinding → DSH agents followup →
-outbound without live Discord. Live Gateway/profile activation remains blocked
-until operator authorization.
+Proven without live Discord:
+
+- FakeTransport → ConversationBinding → DSH agents followup → outbound
+- Durable outbox with 429/Retry-After, crash recovery, multi-step groups
 
 ```bash
 npm test
 npm run smoke
 ```
 
-Pinned client: **`discord.js@14.27.0`** (skeleton only — no live connect).
+Pinned client: **`discord.js@14.27.0`** (skeleton only — no live connect).  
+Outbox ledger (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-outbox.json`
 
 ## What
 
