@@ -1,9 +1,10 @@
 # Event contract — dsh-piblox-discord
 
-**STATUS:** DESIGN / NOT IMPLEMENTED  
-Normalized events are **PROPOSED**. Discord Gateway names are **REFERENCE** to current Discord docs.  
+**STATUS:** TARGET CONTRACT **LOCKED** (ADR-0007) / normalization PROPOSED for unshipped event kinds  
+Normalized events are **PROPOSED** where not yet exercised end-to-end. Discord Gateway names are **REFERENCE** to current Discord docs.  
 Core `observability.emit` types are **OBSERVED** (closed set).  
-**LOCKED:** Modern Discord baseline + forward-compatible unknown events (ADR-0007).
+
+**LOCKED:** `Modern Discord API / Components V2 baseline = LOCKED` — delivery-agnostic interactions + forward-compatible unknown events ([ADR-0007](adr/0007-modern-discord-baseline.md)).
 
 ## 1. Normalized event envelope (PROPOSED)
 
@@ -45,7 +46,7 @@ API version (`v10`) belongs in transport metadata only — **not** as a consumer
 | Ordering | Per-channel best-effort Gateway order; **not** a global total order across accounts |
 | Replay | Plugin may re-emit from durable inbound log after crash; consumers must be idempotent |
 | Raw metadata | Optional; bounded size; must pass redaction; never store bot tokens |
-| Bitfields | Preserve Discord flag/permission fields losslessly in payload/raw |
+| Bitfields | Preserve Discord flag/permission fields losslessly in payload/raw (not signed 32-bit assumptions; support extended/string-serialized forms where Discord uses them) |
 
 ## 2. Forward compatibility for events (LOCKED)
 

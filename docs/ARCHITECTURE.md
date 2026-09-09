@@ -3,7 +3,7 @@
 **STATUS:** V1 TRANSPORT + CONFIG PLANE IMPLEMENTED (FakeTransport) / LIVE GATEWAY NOT ACTIVATED  
 **Labels:** LOCKED intents from mission; OBSERVED DSH seams; IMPLEMENTED reliability + operator Settings.
 
-**LOCKED:** Modern Discord API / Components V2 baseline (ADR-0007) — Discord HTTP **`v10`**, **`discord.js` 14.x** direction, Components V2 as first-class transport/render primitive.
+**LOCKED:** `Modern Discord API / Components V2 baseline = LOCKED` ([ADR-0007](adr/0007-modern-discord-baseline.md)) — Discord HTTP **`v10`**, **`discord.js` 14.x** direction, Components V2 as first-class transport/render primitive (not legacy ActionRow-first).
 
 **LOCKED:** `ALL_NORMAL_OUTBOUND_VIA_OUTBOX` — bridge + `messages` API enqueue only; transport writes are outbox-worker / test-only.
 
@@ -102,9 +102,27 @@ String/User/Role/Mentionable/Channel Select, Section, Text Display, Thumbnail,
 Media Gallery, File, Separator, Container, Label, Text Input, File Upload,
 Radio Group, Checkbox Group, Checkbox.
 
+**Suggested V1 typed primitives:** Text Display, Container, Section, Button,
+basic selects, File/attachments.
+
 Legacy messages remain supported for compatibility.
 V1 ships typed helpers for a subset; the **codec/envelope** must not require redesign
-for remaining families.
+for remaining families. Full advanced convenience APIs (including modern modals,
+File Upload, Radio/Checkbox groups, richer media) may remain **V2**.
+
+## 5.1 Modern message + modal + webhook targets (LOCKED representation)
+
+Target message contract accounts for (where applicable): replies, message
+references, forwarding/message snapshots, attachments, Components V2, polls,
+voice-message metadata, `nonce`, `enforce_nonce`, allowed mentions.
+
+Target modal contract supports modern fields (Label, Text Input, selects,
+File Upload, Radio Group, Checkbox Group, Checkbox) — not text-input-only.
+
+Incoming webhooks and Discord Webhook Events are **Feature Contract** capabilities
+(V2) — not architectural exclusions.
+
+Do **not** claim V1 implements every target field.
 
 ## 6. Forward compatibility (LOCKED)
 
@@ -221,8 +239,12 @@ payloads. Extending Core EVENT_TYPES with `discord.*` is **Rejected for V1**.
 
 ## 13. Implementation structure
 
-File layout and package lockfile remain unspecified until the coding mission.
+V1 spike / transport closure / config plane already exist under `src/`
+(FakeTransport default; live Gateway blocked until operator authorize).
 
 **Client direction is LOCKED** to current `discord.js` 14.x
-(`TRANSPORT_DECISION = LOCKED_DIRECT_DISCORDJS`). Exact compatible pin is chosen
-when the package/lockfile is created (implementation detail, not architecture blocker).
+(`TRANSPORT_DECISION = LOCKED_DIRECT_DISCORDJS`). Exact compatible pin is an
+implementation detail within 14.x (currently `14.27.0` in package metadata).
+
+API version **`v10`** stays inside the transport/REST layer — never as a DSH
+consumer contract field.

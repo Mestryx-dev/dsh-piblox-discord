@@ -77,7 +77,7 @@ Those belong in consumer plugins / domain seats that call this provider.
               → ConversationBinding + DSH routing
 ```
 
-**Also LOCKED:** Modern Discord API / Components V2 baseline — HTTP **`v10`**,
+**Also LOCKED:** `Modern Discord API / Components V2 baseline = LOCKED` — HTTP **`v10`**,
 **`discord.js` 14.x** direction, Components V2 as first-class transport/render
 (not legacy ActionRow-first). See [docs/adr/0007-modern-discord-baseline.md](docs/adr/0007-modern-discord-baseline.md).
 

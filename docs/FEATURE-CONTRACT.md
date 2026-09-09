@@ -1,10 +1,10 @@
 # Feature contract — dsh-piblox-discord
 
-**STATUS:** DESIGN / NOT IMPLEMENTED  
+**STATUS:** TARGET CONTRACT **LOCKED** (ADR-0007) / implementation partial (transport + config plane)  
 Target surface = what the plugin is meant to become.  
-V1 = first shippable increment that proves the architecture.
+V1 = first shippable increment that proves the architecture — **without** redesigning for Components V2 / modern install / delivery modes later.
 
-**LOCKED:** Modern Discord API / Components V2 baseline (ADR-0007).  
+**LOCKED:** `Modern Discord API / Components V2 baseline = LOCKED` ([ADR-0007](adr/0007-modern-discord-baseline.md)).  
 Designed against the **current Discord Developer Platform (2026)**, not legacy bot patterns.
 
 ## Classification legend
@@ -15,6 +15,46 @@ Designed against the **current Discord Developer Platform (2026)**, not legacy b
 | **V1 SHOULD** | Strongly preferred in V1 if cost stays bounded |
 | **V2** | Planned after V1 proves Core contracts |
 | **LATER** | Explicitly deferred; document only |
+
+---
+
+## Feature tiers (LOCKED summary)
+
+Contract correction only — **do not** treat this section as an implementation mandate for deferred rows.
+
+### V1 MUST
+
+- modern Gateway / REST foundation (`v10` isolated in transport)
+- Components V2 **foundation** (representable tree + typed subset)
+- legacy message compatibility (`content` / embeds / ActionRow)
+- basic current message model (send / reply / edit, references, mentions, attachments)
+- buttons
+- basic selects
+- defer / follow-up
+- attachments / File
+- event normalization
+- forward-compatible transport envelope
+
+### V2
+
+- complete Components V2 convenience API
+- modern modal framework
+- File Upload
+- Radio Group
+- Checkbox Group / Checkbox
+- polls
+- user / message commands (ops)
+- user-install ops support
+- HTTP interactions
+- incoming / event webhooks
+- richer media surfaces (Thumbnail, Media Gallery, …)
+
+### LATER
+
+- voice transport / audio
+- stage
+- Activities / Social SDK (only if justified)
+- scale-driven sharding enhancements
 
 ---
 
@@ -54,15 +94,18 @@ Designed against the **current Discord Developer Platform (2026)**, not legacy b
 
 ## Installation & command contexts (LOCKED model)
 
+Target contract **represents** the modern application model. Do **not** assume
+`command = guild slash command`.
+
 | Feature | Class | Notes |
 |---|---|---|
 | Understand `GUILD_INSTALL` | V1 MUST | typical V1 production config |
 | Understand `USER_INSTALL` | V1 MUST (model) / V2 (ops support) | **do not hard-code GUILD_INSTALL-only into contracts** |
 | Interaction contexts (guild, bot DM, private channel where supported) | V1 MUST (model) | |
-| CHAT_INPUT / slash commands | V1 SHOULD | do not assume `command = guild slash` |
-| USER commands | V2 | represent in target contract now |
-| MESSAGE commands | V2 | |
-| Autocomplete | V2 | |
+| CHAT_INPUT / slash commands | V1 SHOULD (ops) / V1 MUST (model) | one of three command types |
+| USER commands | V1 MUST (model) / V2 (ops) | represent now; ops may wait |
+| MESSAGE commands | V1 MUST (model) / V2 (ops) | represent now; ops may wait |
+| Autocomplete | V1 MUST (model) / V2 (ops) | |
 | Installation context metadata on interactions | V1 MUST | normalized field even if V1 config is guild-only |
 
 ## Guild / channel model
@@ -98,6 +141,7 @@ Target contract accounts for current Discord capabilities. V1 implements a subse
 | Forwarding / message snapshots | V2 | represent in target model |
 | Polls | V2 | |
 | Voice-message metadata | V2 | metadata only; not voice transport |
+| Richer media surfaces (beyond File) | V2 | Thumbnail / Media Gallery convenience |
 | Message search | LATER | only if Discord API allows for bot |
 
 ## Components V2 (LOCKED — first-class)
@@ -245,8 +289,10 @@ adapter; FakeTransport; installation/context fields in the model (even if ops st
 GUILD_INSTALL-only).
 
 **V1 excludes (implementation):** full Components V2 convenience API; modern modals;
-polls; user/message commands ops; USER_INSTALL ops; HTTP interactions; webhooks;
-voice; full admin surface; product-specific agents.
+File Upload / Radio / Checkbox groups; polls; user/message command ops; USER_INSTALL
+ops; HTTP interactions; webhooks; richer media convenience; voice; full admin
+surface; product-specific agents.
 
-This remains enough to demonstrate architecture without redesign when Discord adds
-components, events, or REST features.
+Those exclusions are **implementation tiers**, not architectural exclusions —
+the target contracts still name them so Discord platform growth does not force a
+plugin redesign.
