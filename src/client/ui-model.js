@@ -94,3 +94,25 @@ export function dmFailClosedSummary(dm) {
 export function publicAccountOmitsCanary(obj, canary) {
   return !JSON.stringify(obj).includes(canary)
 }
+
+/**
+ * Card title: prefer display label; never append token state.
+ * Strips a legacy " (no token)" suffix from older smoke labels (display only).
+ * @param {{ label?: string, account_id?: string }} item
+ */
+export function displayAccountTitle(item) {
+  const id = item?.account_id || ''
+  let label = String(item?.label || '').trim()
+  if (label.toLowerCase().endsWith('(no token)')) {
+    label = label.replace(/\s*\(no token\)\s*$/i, '').trim()
+  }
+  return label || id
+}
+
+/**
+ * Map delete-modal checkbox → accounts DELETE query string.
+ * @param {boolean} deleteVaultSecret
+ */
+export function deleteAccountQuery(deleteVaultSecret) {
+  return deleteVaultSecret ? '?deleteSecret=true' : ''
+}

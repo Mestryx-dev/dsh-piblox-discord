@@ -166,6 +166,52 @@ window.__ModuleLoader__.load({
         background: "transparent",
         color: "var(--dsw-alias-label-primary, inherit)",
       },
+      btnDanger: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "4px",
+        height: "36px",
+        padding: "0 14px",
+        border: "none",
+        borderRadius: "18px",
+        cursor: "pointer",
+        fontSize: "14px",
+        lineHeight: "22px",
+        background: "var(--dsw-alias-label-error, tomato)",
+        color: "var(--dsw-alias-label-primary-foreground, Canvas)",
+      },
+      btnDangerSm: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "28px",
+        padding: "0 10px",
+        borderRadius: "14px",
+        cursor: "pointer",
+        fontSize: "12px",
+        lineHeight: "18px",
+        border: "0.5px solid color-mix(in oklab, var(--dsw-alias-label-error, tomato) 40%, transparent)",
+        background: "transparent",
+        color: "var(--dsw-alias-label-error, tomato)",
+      },
+      btnAdd: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "4px",
+        height: "36px",
+        padding: "0 14px",
+        borderRadius: "18px",
+        cursor: "pointer",
+        fontSize: "14px",
+        lineHeight: "22px",
+        border: "0.5px solid var(--dsw-alias-border-l3, color-mix(in oklab, CanvasText 22%, transparent))",
+        background: "transparent",
+        color: "var(--dsw-alias-label-primary, inherit)",
+        flex: "0 0 auto",
+        whiteSpace: "nowrap",
+      },
       pill: {
         display: "inline-flex",
         alignItems: "center",
@@ -215,13 +261,84 @@ window.__ModuleLoader__.load({
       metaRow: {
         display: "grid",
         gridTemplateColumns: "5.5rem 1fr",
-        gap: "0.35rem 0.75rem",
+        gap: "0.25rem 0.75rem",
         fontSize: "12px",
         lineHeight: 1.45,
         color: "var(--dsw-alias-label-secondary, inherit)",
       },
       metaKey: {
         color: "var(--dsw-alias-label-tertiary, inherit)",
+      },
+      headerBar: {
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: "0.75rem 1rem",
+        flexWrap: "wrap",
+      },
+      headerText: {
+        flex: "1 1 12rem",
+        minWidth: 0,
+      },
+      actionsBar: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "0.5rem",
+        flexWrap: "wrap",
+      },
+      actionsLeft: {
+        display: "flex",
+        gap: "0.4rem",
+        flexWrap: "wrap",
+        alignItems: "center",
+      },
+      modalRoot: {
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+      },
+      modalMask: {
+        position: "absolute",
+        inset: 0,
+        background: "var(--dsw-alias-bg-mask-1, rgba(0,0,0,0.24))",
+        backdropFilter: "var(--dsw-mask-blur, blur(2px))",
+      },
+      modalDialog: {
+        position: "relative",
+        zIndex: 1,
+        display: "flex",
+        flexDirection: "column",
+        gap: "16px",
+        width: "min(380px, 100%)",
+        padding: "22px 24px 20px",
+        borderRadius: "24px",
+        background: "var(--dsw-alias-bg-layer-2, Canvas)",
+        boxShadow: "var(--dsw-elevation-prominent, 0 12px 40px rgba(0,0,0,0.18))",
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      modalTitle: {
+        margin: 0,
+        fontSize: "16px",
+        lineHeight: "24px",
+        fontWeight: 500,
+      },
+      modalBody: {
+        margin: 0,
+        fontSize: "14px",
+        lineHeight: "22px",
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      modalFooter: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: "0.5rem",
+        flexWrap: "wrap",
       },
       details: {
         border: "0.5px solid var(--dsw-alias-border-l2, color-mix(in oklab, CanvasText 12%, transparent))",
@@ -257,9 +374,12 @@ window.__ModuleLoader__.load({
         replaceToken: "Replace token",
         removeToken: "Remove token",
         confirmRemoveToken: "Remove bot token for this account? The account stays configured.",
-        confirmDelete: "Delete this Discord account config? Bindings and outbox are kept.",
-        deleteSecretToo: "Also delete vault secret",
-        deleteSecretHint: "Optional. Unchecked keeps the secret in Settings → Secrets.",
+        confirmDeleteTitle: 'Delete Discord account "{id}"?',
+        confirmDeleteBody:
+          "The account configuration will be removed. ConversationBinding and delivery history are retained.",
+        deleteSecretToo: "Also delete {secret} from Secrets",
+        deleteSecretHint: "Unchecked keeps the secret in Settings → Secrets.",
+        closeDialog: "Close",
         sectionGeneral: "General",
         sectionIntents: "Gateway intents",
         sectionGuilds: "Guild access",
@@ -356,6 +476,30 @@ window.__ModuleLoader__.load({
       if (status === "missing_credentials" || status === "rate_limited") return { ...css.pill, ...css.pillWarn };
       if (status === "failed_auth" || status === "error") return { ...css.pill, ...css.pillError };
       return css.pill;
+    }
+
+    /** Display-only: strip legacy " (no token)" suffix from older smoke labels. */
+    function displayAccountTitle(item) {
+      const id = (item && item.account_id) || "";
+      let label = String((item && item.label) || "").trim();
+      if (label.toLowerCase().endsWith("(no token)")) {
+        label = label.replace(/\s*\(no token\)\s*$/i, "").trim();
+      }
+      return label || id;
+    }
+
+    function credentialSecretName(accountId) {
+      return "DISCORD_" + String(accountId || "").toUpperCase() + "_BOT_TOKEN";
+    }
+
+    function deleteAccountQuery(deleteVaultSecret) {
+      return deleteVaultSecret ? "?deleteSecret=true" : "";
+    }
+
+    function fillTemplate(template, vars) {
+      return String(template || "").replace(/\{(\w+)\}/g, (_, key) =>
+        vars[key] != null ? String(vars[key]) : "",
+      );
     }
 
     function Field({ id, label, hint, children }) {
@@ -832,26 +976,40 @@ window.__ModuleLoader__.load({
       });
     }
 
-    function AccountCard({ item, t, deleteSecret, setDeleteSecret, onEdit, onDelete, onRemoveToken }) {
+    function AccountCard({ item, t, onEdit, onDelete, onRemoveToken }) {
       const summary = item.scope_summary || {};
       const configured = Boolean(item.credentials && item.credentials.configured);
+      const title = displayAccountTitle(item);
       return jsxs("article", {
         style: css.card,
-        "aria-label": item.label || item.account_id,
+        "aria-label": title || item.account_id,
         children: [
           jsxs("div", {
-            style: { display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" },
+            style: {
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: "0.75rem",
+              flexWrap: "wrap",
+            },
             children: [
               jsxs("div", {
+                style: { minWidth: 0, flex: "1 1 10rem" },
                 children: [
                   jsx("strong", {
-                    style: { fontSize: "14px", color: "var(--dsw-alias-label-primary, inherit)" },
-                    children: item.label || item.account_id,
+                    style: {
+                      display: "block",
+                      fontSize: "14px",
+                      color: "var(--dsw-alias-label-primary, inherit)",
+                      overflowWrap: "anywhere",
+                    },
+                    children: title,
                   }),
                   jsx("div", {
                     style: {
                       fontSize: "12px",
                       color: "var(--dsw-alias-label-tertiary, inherit)",
+                      overflowWrap: "anywhere",
                     },
                     children: item.account_id,
                   }),
@@ -879,44 +1037,96 @@ window.__ModuleLoader__.load({
             ],
           }),
           jsxs("div", {
-            style: css.row,
+            style: css.actionsBar,
             children: [
-              jsx("button", {
-                type: "button",
-                style: css.btnSm,
-                onClick: onEdit,
-                children: t("edit"),
-              }),
-              configured
-                ? jsx("button", {
+              jsxs("div", {
+                style: css.actionsLeft,
+                children: [
+                  jsx("button", {
                     type: "button",
                     style: css.btnSm,
-                    onClick: onRemoveToken,
-                    children: t("removeToken"),
-                  })
-                : null,
+                    onClick: onEdit,
+                    children: t("edit"),
+                  }),
+                  configured
+                    ? jsx("button", {
+                        type: "button",
+                        style: css.btnDangerSm,
+                        onClick: onRemoveToken,
+                        children: t("removeToken"),
+                      })
+                    : null,
+                ],
+              }),
               jsx("button", {
                 type: "button",
-                style: css.btnSm,
+                style: css.btnDangerSm,
                 onClick: onDelete,
                 children: t("delete"),
               }),
             ],
           }),
+        ],
+      });
+    }
+
+    function DeleteAccountDialog({ account, t, busy, onCancel, onConfirm }) {
+      const [deleteSecret, setDeleteSecret] = useState(false);
+      const secretName = credentialSecretName(account.account_id);
+      const title = fillTemplate(t("confirmDeleteTitle"), { id: account.account_id });
+      const secretLabel = fillTemplate(t("deleteSecretToo"), { secret: secretName });
+      const checkId = "delete-secret-confirm-" + account.account_id;
+
+      return jsxs("div", {
+        style: css.modalRoot,
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-labelledby": "discord-delete-title",
+        children: [
+          jsx("div", {
+            style: css.modalMask,
+            onClick: busy ? undefined : onCancel,
+          }),
           jsxs("div", {
-            style: { display: "flex", flexDirection: "column", gap: "0.2rem" },
+            style: css.modalDialog,
             children: [
-              jsx(Check, {
-                id: "delete-secret-" + item.account_id,
-                checked: Boolean(deleteSecret[item.account_id]),
-                onChange: (ev) =>
-                  setDeleteSecret((prev) => ({
-                    ...prev,
-                    [item.account_id]: ev.target.checked,
-                  })),
-                label: t("deleteSecretToo"),
+              jsx("h3", {
+                id: "discord-delete-title",
+                style: css.modalTitle,
+                children: title,
               }),
-              jsx("p", { style: css.hint, children: t("deleteSecretHint") }),
+              jsx("p", { style: css.modalBody, children: t("confirmDeleteBody") }),
+              jsxs("div", {
+                style: { display: "flex", flexDirection: "column", gap: "0.35rem" },
+                children: [
+                  jsx(Check, {
+                    id: checkId,
+                    checked: deleteSecret,
+                    onChange: (ev) => setDeleteSecret(Boolean(ev.target.checked)),
+                    label: secretLabel,
+                  }),
+                  jsx("p", { style: css.hint, children: t("deleteSecretHint") }),
+                ],
+              }),
+              jsxs("div", {
+                style: css.modalFooter,
+                children: [
+                  jsx("button", {
+                    type: "button",
+                    style: css.btnOutline,
+                    disabled: busy,
+                    onClick: onCancel,
+                    children: t("cancel"),
+                  }),
+                  jsx("button", {
+                    type: "button",
+                    style: { ...css.btnDanger, opacity: busy ? 0.5 : 1 },
+                    disabled: busy,
+                    onClick: () => onConfirm(deleteSecret),
+                    children: t("delete"),
+                  }),
+                ],
+              }),
             ],
           }),
         ],
@@ -931,7 +1141,8 @@ window.__ModuleLoader__.load({
       const [loading, setLoading] = useState(true);
       const [mode, setMode] = useState("list");
       const [editing, setEditing] = useState(null);
-      const [deleteSecret, setDeleteSecret] = useState({});
+      const [pendingDelete, setPendingDelete] = useState(null);
+      const [deleteBusy, setDeleteBusy] = useState(false);
 
       const refresh = useCallback(async () => {
         setErr("");
@@ -962,19 +1173,20 @@ window.__ModuleLoader__.load({
         }
       }
 
-      async function onDelete(account) {
-        if (!confirm(t("confirmDelete"))) return;
+      async function confirmDeleteAccount(deleteVaultSecret) {
+        if (!pendingDelete) return;
+        setDeleteBusy(true);
         try {
-          const q = deleteSecret[account.account_id] ? "?deleteSecret=true" : "";
-          await api("/accounts/" + encodeURIComponent(account.account_id) + q, { method: "DELETE" });
-          setDeleteSecret((prev) => {
-            const next = { ...prev };
-            delete next[account.account_id];
-            return next;
+          const q = deleteAccountQuery(deleteVaultSecret);
+          await api("/accounts/" + encodeURIComponent(pendingDelete.account_id) + q, {
+            method: "DELETE",
           });
+          setPendingDelete(null);
           await refresh();
         } catch (e) {
           setErr((e && e.message) || t("error"));
+        } finally {
+          setDeleteBusy(false);
         }
       }
 
@@ -1000,16 +1212,22 @@ window.__ModuleLoader__.load({
         style: css.page,
         children: [
           jsxs("div", {
+            style: css.headerBar,
             children: [
-              jsx("h2", { style: css.title, children: t("title") }),
-              jsx("p", { style: css.subtitle, children: t("subtitle") }),
+              jsxs("div", {
+                style: css.headerText,
+                children: [
+                  jsx("h2", { style: css.title, children: t("title") }),
+                  jsx("p", { style: css.subtitle, children: t("subtitle") }),
+                ],
+              }),
+              jsx("button", {
+                type: "button",
+                style: css.btnAdd,
+                onClick: () => setMode("add"),
+                children: t("add"),
+              }),
             ],
-          }),
-          jsx("button", {
-            type: "button",
-            style: css.btnPrimary,
-            onClick: () => setMode("add"),
-            children: t("add"),
           }),
           loading
             ? jsx("div", { style: css.hint, children: t("loading") })
@@ -1023,13 +1241,11 @@ window.__ModuleLoader__.load({
                       {
                         item: item,
                         t: t,
-                        deleteSecret: deleteSecret,
-                        setDeleteSecret: setDeleteSecret,
                         onEdit: () => {
                           setEditing(item);
                           setMode("edit");
                         },
-                        onDelete: () => void onDelete(item),
+                        onDelete: () => setPendingDelete(item),
                         onRemoveToken: () => void onRemoveToken(item),
                       },
                       item.account_id,
@@ -1037,6 +1253,21 @@ window.__ModuleLoader__.load({
                   ),
                 }),
           err ? jsx("p", { role: "alert", style: css.error, children: err }) : null,
+          pendingDelete
+            ? jsx(
+                DeleteAccountDialog,
+                {
+                  account: pendingDelete,
+                  t: t,
+                  busy: deleteBusy,
+                  onCancel: () => {
+                    if (!deleteBusy) setPendingDelete(null);
+                  },
+                  onConfirm: (deleteVaultSecret) => void confirmDeleteAccount(deleteVaultSecret),
+                },
+                pendingDelete.account_id,
+              )
+            : null,
         ],
       });
     }

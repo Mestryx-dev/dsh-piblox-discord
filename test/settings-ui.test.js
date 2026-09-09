@@ -13,6 +13,8 @@ import {
   statusTone,
   dmFailClosedSummary,
   publicAccountOmitsCanary,
+  displayAccountTitle,
+  deleteAccountQuery,
 } from '../src/client/ui-model.js'
 import {
   createDiscordAccountsService,
@@ -66,6 +68,18 @@ describe('Discord Settings UI model', () => {
       dmFailClosedSummary({ enabled: true, allowAllUsers: false, allowedUsers: [SF_U] }),
       'allowlist',
     )
+  })
+
+  it('displayAccountTitle strips legacy (no token) without inventing status in title', () => {
+    assert.equal(displayAccountTitle({ account_id: 'lab', label: 'Lab' }), 'Lab')
+    assert.equal(displayAccountTitle({ account_id: 'lab', label: 'Lab (no token)' }), 'Lab')
+    assert.equal(displayAccountTitle({ account_id: 'lab', label: '' }), 'lab')
+    assert.doesNotMatch(displayAccountTitle({ account_id: 'lab', label: 'Lab (no token)' }), /\(no token\)/i)
+  })
+
+  it('deleteAccountQuery maps checkbox → deleteSecret query', () => {
+    assert.equal(deleteAccountQuery(false), '')
+    assert.equal(deleteAccountQuery(true), '?deleteSecret=true')
   })
 })
 
@@ -191,5 +205,50 @@ describe('client module registration shape', () => {
     assert.equal(src.includes(CANARY), false)
     assert.doesNotMatch(src, /credentials\.value|token\.slice|last four|••••/)
     assert.doesNotMatch(src, /guilds=deny_all channels=deny_all/)
+  })
+
+  it('ships final layout polish contracts', () => {
+    const src = readFileSync(new URL('../src/client/index.js', import.meta.url), 'utf8')
+    // Add account: compact outline-style control, not a forced full-width primary under the title alone
+    assert.match(src, /btnAdd/)
+    assert.match(src, /headerBar/)
+    assert.doesNotMatch(
+      src,
+      /jsx\("h2"[^]*?btnPrimary[^]*?t\("add"\)/,
+    )
+    // Card title must not append (no token); token has its own summary row
+    assert.match(src, /displayAccountTitle/)
+    assert.match(src, /function displayAccountTitle/)
+    assert.doesNotMatch(src, /\$\{[^}]*no token/)
+    assert.doesNotMatch(src, /\+ " \(no token\)"/)
+    // Inline delete-secret checkbox removed from AccountCard; lives in delete modal only
+    assert.match(src, /DeleteAccountDialog/)
+    assert.match(src, /role: "dialog"/)
+    assert.match(src, /useState\(false\)/)
+    assert.match(src, /deleteAccountQuery/)
+    assert.match(src, /Also delete \{secret\} from Secrets|deleteSecretToo/)
+    assert.match(src, /confirmDeleteBody/)
+    assert.match(src, /ConversationBinding and delivery history are retained/)
+    // Card must not host the vault-secret checkbox / optional help
+    const cardStart = src.indexOf('function AccountCard')
+    const cardEnd = src.indexOf('function DeleteAccountDialog')
+    assert.ok(cardStart > 0 && cardEnd > cardStart)
+    const cardSrc = src.slice(cardStart, cardEnd)
+    assert.doesNotMatch(cardSrc, /deleteSecretToo/)
+    assert.doesNotMatch(cardSrc, /deleteSecretHint/)
+    assert.doesNotMatch(cardSrc, /Also delete/)
+    // Modal hosts optional vault deletion; default false via useState(false)
+    const modalStart = src.indexOf('function DeleteAccountDialog')
+    const modalEnd = src.indexOf('function DiscordSection')
+    const modalSrc = src.slice(modalStart, modalEnd)
+    assert.match(modalSrc, /useState\(false\)/)
+    assert.match(modalSrc, /deleteSecretToo/)
+    assert.match(modalSrc, /deleteSecretHint/)
+    assert.match(modalSrc, /onConfirm\(deleteSecret\)/)
+    // Status still comes from backend item.status
+    assert.match(cardSrc, /item\.status/)
+    // Actions hierarchy: Edit left, Delete right
+    assert.match(cardSrc, /actionsBar/)
+    assert.match(cardSrc, /actionsLeft/)
   })
 })
