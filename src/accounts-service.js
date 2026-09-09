@@ -124,9 +124,27 @@ export function createDiscordAccountsService(deps) {
     const configured = await credentialConfigured(ref)
     if (!configured) return 'missing_credentials'
     if (outbox?.isAccountIsolated?.(accountId)) return 'failed_auth'
+    const transportStatus =
+      typeof transport?.getAccountStatus === 'function'
+        ? transport.getAccountStatus(accountId)
+        : null
+    if (
+      transportStatus === 'failed_auth' ||
+      transportStatus === 'error' ||
+      transportStatus === 'starting' ||
+      transportStatus === 'connected' ||
+      transportStatus === 'disconnected'
+    ) {
+      if (transportStatus === 'connected' || liveGatewayConnected(accountId)) return 'connected'
+      if (transportStatus === 'starting') return 'starting'
+      if (transportStatus === 'failed_auth') return 'failed_auth'
+      if (transportStatus === 'error') return 'error'
+      if (transportStatus === 'disconnected' && transport?.isAccountRunning?.(accountId)) {
+        return 'disconnected'
+      }
+    }
     if (liveGatewayConnected(accountId)) return 'connected'
     if (transport?.isAccountRunning?.(accountId)) {
-      // Transport started but no live Gateway session → honest disconnected
       return 'disconnected'
     }
     return 'stopped'
@@ -463,10 +481,12 @@ export function createDiscordAccountsService(deps) {
       return
     }
 
-    // Fake / skeleton: startAccount without resolving token into Gateway login
+    // Start when enabled + credentials present. Live Gateway uses secrets.resolve inside transport.
     if (!transport.isAccountRunning?.(id) && transport.startAccount) {
-      // Do not pass raw token — live phase will resolve via secrets store
-      await transport.startAccount(id, { credentialsRef: ref })
+      await transport.startAccount(id, {
+        credentialsRef: ref,
+        intents: account.intents,
+      })
       outbox?.clearAccountIsolation?.(id)
     }
   }

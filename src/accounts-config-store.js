@@ -41,7 +41,7 @@ export function createAccountsConfigStore(options) {
   const lockPath = `${storePath}.lock`
 
   function empty() {
-    return { version: 1, transport: 'fake', accounts: {} }
+    return { version: 1, transport: 'fake', allowConnect: false, accounts: {} }
   }
 
   function load() {
@@ -51,6 +51,7 @@ export function createAccountsConfigStore(options) {
     const parsed = JSON.parse(raw)
     const normalized = normalizePluginConfig({
       transport: parsed.transport,
+      allowConnect: parsed.allowConnect,
       accounts: parsed.accounts || {},
     })
     return { version: Number(parsed.version) || 1, ...normalized }
@@ -122,9 +123,11 @@ export function createAccountsConfigStore(options) {
    */
   async function seedFromBootConfig(seed) {
     return withLock((data) => {
-      if (Object.keys(data.accounts).length > 0) return { seeded: false, data }
       const normalized = normalizePluginConfig(seed || {})
+      // Profile boot owns transport/allowConnect flags (live Gateway safety gate).
       data.transport = normalized.transport
+      data.allowConnect = normalized.allowConnect
+      if (Object.keys(data.accounts).length > 0) return { seeded: false, data }
       data.accounts = { ...normalized.accounts }
       return { seeded: true, data }
     })

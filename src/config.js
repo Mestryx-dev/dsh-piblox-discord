@@ -36,6 +36,7 @@ import { normalizeIntents } from './intents.js'
 /**
  * @typedef {{
  *   transport?: 'fake'|'discordjs',
+ *   allowConnect?: boolean,
  *   accounts?: Record<string, AccountConfig>,
  * }} PluginConfig
  */
@@ -60,6 +61,7 @@ export const DEFAULT_ACCOUNT = Object.freeze({
 
 export const DEFAULT_CONFIG = Object.freeze({
   transport: 'fake',
+  allowConnect: false,
   accounts: Object.freeze({}),
 })
 
@@ -138,7 +140,9 @@ export function normalizePluginConfig(raw = {}) {
     accounts[id] = normalizeAccountConfig(cfg)
   }
   const transport = raw.transport === 'discordjs' ? 'discordjs' : 'fake'
-  return { transport, accounts }
+  // Live Gateway login is opt-in only — never default true.
+  const allowConnect = Boolean(raw.allowConnect)
+  return { transport, allowConnect, accounts }
 }
 
 /**

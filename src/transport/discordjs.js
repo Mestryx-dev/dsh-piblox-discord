@@ -1,42 +1,152 @@
 /**
- * Discord.js transport skeleton — compiles against discord.js 14.x.
- * Does NOT connect to Discord Gateway/REST in this spike (no token, no login).
+ * Discord.js transport — per-account Client lifecycle (discord.js 14.x / API v10).
+ *
+ * Safety: allowConnect defaults false. Profile boot / imports never login unless
+ * Cordis config explicitly sets allowConnect=true (operator-authorized LAB smoke).
+ *
+ * Credentials: resolve via injected secrets.resolve(ref) only — never process.env,
+ * never persist resolved token into ledger/outbox.
  */
+
+import { mapDiscordJsError } from '../discord-errors.js'
+import { TransportError } from './fake.js'
 
 /**
  * @typedef {import('./transport.js').DiscordTransport} DiscordTransport
  * @typedef {import('./transport.js').InboundHandler} InboundHandler
  * @typedef {import('../types.js').OutboundMessage} OutboundMessage
  * @typedef {import('../types.js').SentMessage} SentMessage
+ * @typedef {import('../types.js').PlatformEvent} PlatformEvent
  */
 
+/** Smoke-minimum intents (mission). */
+export const LIVE_SMOKE_INTENT_IDS = Object.freeze(['Guilds', 'GuildMessages', 'MessageContent'])
+
 /**
- * Skeleton adapter validating discord.js is importable.
- * Calling startAccount without an explicit allowConnect flag throws.
+ * Map intent name strings → GatewayIntentBits values.
+ * @param {typeof import('discord.js')} djs
+ * @param {string[]} intentIds
+ */
+export function resolveGatewayIntents(djs, intentIds) {
+  const bits = djs.GatewayIntentBits
+  const out = []
+  for (const id of intentIds || []) {
+    if (bits[id] == null) {
+      throw new TypeError(`unknown GatewayIntentBits: ${id}`)
+    }
+    out.push(bits[id])
+  }
+  return out
+}
+
+/**
+ * Normalize a discord.js Message into the plugin PlatformEvent (no Message object leak).
+ * @param {string} accountId
+ * @param {any} message
+ * @returns {PlatformEvent}
+ */
+export function normalizeMessageCreate(accountId, message) {
+  const channel = message?.channel
+  const isDm = Boolean(
+    channel?.isDMBased?.() === true ||
+      (message?.guildId == null && message?.guild == null),
+  )
+  const threadId =
+    typeof channel?.isThread === 'function'
+      ? channel.isThread()
+        ? String(message.channelId)
+        : undefined
+      : channel?.isThread
+        ? String(message.channelId)
+        : undefined
+
+  return {
+    type: 'discord.message.created',
+    accountId: String(accountId),
+    eventId: String(message?.id || ''),
+    messageId: String(message?.id || ''),
+    guildId: message?.guildId != null ? String(message.guildId) : undefined,
+    channelId: String(message?.channelId || ''),
+    threadId,
+    userId: String(message?.author?.id || ''),
+    content: String(message?.content ?? ''),
+    isBot: Boolean(message?.author?.bot),
+    isDm,
+    raw: {
+      timestamp: message?.createdAt?.toISOString?.() || message?.createdTimestamp || null,
+      author_bot: Boolean(message?.author?.bot),
+    },
+  }
+}
+
+/**
+ * Build REST create/edit body from OutboundMessage (nonce / enforce_nonce preserved).
+ * @param {OutboundMessage} payload
+ */
+export function toDiscordMessageBody(payload) {
+  /** @type {Record<string, unknown>} */
+  const body = {}
+  if (payload?.content != null) body.content = payload.content
+  if (payload?.nonce != null) body.nonce = String(payload.nonce)
+  if (payload?.enforceNonce != null) body.enforceNonce = Boolean(payload.enforceNonce)
+  if (payload?.allowedMentions) body.allowedMentions = payload.allowedMentions
+  if (payload?.replyTo) {
+    body.reply = { messageReference: String(payload.replyTo), failIfNotExists: false }
+  }
+  return body
+}
+
+/**
  * @implements {DiscordTransport}
  */
 export class DiscordJsTransport {
+  /**
+   * @param {{
+   *   allowConnect?: boolean,
+   *   resolveCredential?: (ref: string) => Promise<{ ok?: boolean, value?: string } | string | null> | { ok?: boolean, value?: string } | string | null,
+   *   createClient?: (args: { accountId: string, intents: number[], discord: any }) => Promise<any> | any,
+   *   importDiscord?: () => Promise<any>,
+   *   logger?: { info?: Function, warn?: Function, debug?: Function },
+   * }} [options]
+   */
   constructor(options = {}) {
     /** @type {boolean} */
     this.allowConnect = Boolean(options.allowConnect)
+    this.resolveCredential = options.resolveCredential || null
+    this.createClient = options.createClient || null
+    this.importDiscord = options.importDiscord || null
+    this.logger = options.logger || null
+
     /** @type {Set<string>} */
     this.running = new Set()
+    /** @type {Set<string>} */
+    this.connected = new Set()
+    /** @type {Map<string, 'starting'|'connected'|'disconnected'|'failed_auth'|'error'>} */
+    this.statuses = new Map()
+    /** @type {Map<string, { client: any }>} */
+    this.clients = new Map()
     /** @type {InboundHandler[]} */
     this.handlers = []
     /** @type {typeof import('discord.js') | null} */
     this._discord = null
+    /**
+     * Bounded REST/rate-limit observations (no secrets).
+     * @type {Array<Record<string, unknown>>}
+     */
+    this.restObservations = []
   }
 
   async _loadDiscord() {
     if (!this._discord) {
-      this._discord = await import('discord.js')
+      this._discord = this.importDiscord
+        ? await this.importDiscord()
+        : await import('discord.js')
     }
     return this._discord
   }
 
   /**
    * Type/compile smoke: ensure Client + GatewayIntentBits exist.
-   * Also verify reliability-relevant APIs exist for the live phase (DESIGNED_FOR_LIVE).
    * Never logs in.
    */
   async validateDependency() {
@@ -47,22 +157,19 @@ export class DiscordJsTransport {
     if (!djs.GatewayIntentBits) {
       throw new Error('discord.js GatewayIntentBits missing')
     }
-    // RateLimitError / DiscordAPIError surface Retry-After / status for outbox classification.
-    const hasRateLimitError = typeof djs.RateLimitError === 'function' || typeof djs.DiscordAPIError === 'function'
+    const hasRateLimitError =
+      typeof djs.RateLimitError === 'function' || typeof djs.DiscordAPIError === 'function'
     return {
       package: 'discord.js',
       hasClient: true,
       hasGatewayIntentBits: true,
       hasRateLimitErrorSurface: hasRateLimitError,
-      supportsNonceEnforceNonce: true, // Create Message body fields; live REST will pass through OutboundMessage
+      supportsNonceEnforceNonce: true,
       restCalls: 0,
+      allowConnect: this.allowConnect,
     }
   }
 
-  /**
-   * Document how live REST errors will feed the outbox scheduler later.
-   * No network I/O.
-   */
   describeReliabilityContract() {
     return {
       rateLimit:
@@ -71,24 +178,217 @@ export class DiscordJsTransport {
         'DiscordAPIError[code] 5xx→retryable; 401→auth isolate; 403/50013/50001→permission; 404/10003/10008→unknown_target',
       resourceIds: 'Returned message/channel/thread snowflakes become discord_resource_id',
       nonce: 'OutboundMessage.nonce + enforceNonce forwarded on Create Message',
-      live: false,
+      live: this.allowConnect,
+      observedSurfaces: [
+        'discord.js RateLimitError.retryAfter / timeToReset',
+        'DiscordAPIError.status / code',
+        'HTTPError.status',
+        'Client rest rateLimit / invalidRequestWarning (if emitted)',
+      ],
+      bucketEngineStatus: 'NOT_PROVEN_IN_SMOKE',
     }
   }
 
+  /**
+   * @param {string} ref
+   * @param {{ token?: string }} [options]
+   */
+  async _resolveToken(ref, options = {}) {
+    // Test-only escape: never used in Cordis production wiring.
+    if (options.token != null) {
+      throw new Error('DiscordJsTransport: inline token option forbidden')
+    }
+    if (!ref) {
+      throw new TransportError('auth', 'missing credentials ref')
+    }
+    if (!this.resolveCredential) {
+      throw new TransportError('auth', 'secrets.resolve not wired')
+    }
+    const result = await this.resolveCredential(ref)
+    if (result == null) return null
+    if (typeof result === 'string') return result || null
+    if (typeof result === 'object' && result.ok === false) return null
+    if (typeof result === 'object' && typeof result.value === 'string') {
+      return result.value || null
+    }
+    return null
+  }
+
   /** @param {string} accountId */
-  async startAccount(accountId) {
+  getAccountStatus(accountId) {
+    return this.statuses.get(accountId) || (this.running.has(accountId) ? 'starting' : 'disconnected')
+  }
+
+  /** @param {string} accountId */
+  isAccountConnected(accountId) {
+    return this.connected.has(accountId)
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {{ credentialsRef?: string, intents?: string[] }} [options]
+   */
+  async startAccount(accountId, options = {}) {
     if (!this.allowConnect) {
       throw new Error(
-        'DiscordJsTransport: live connect disabled in V1 spike (set allowConnect only under explicit operator authorization)',
+        'DiscordJsTransport: live connect disabled (set allowConnect=true only under explicit operator authorization)',
       )
     }
-    void accountId
-    throw new Error('DiscordJsTransport: live Gateway not implemented in this spike')
+    const id = String(accountId)
+    if (this.running.has(id) && this.clients.has(id)) {
+      return
+    }
+
+    this.statuses.set(id, 'starting')
+    let token = null
+    /** @type {any} */
+    let client = null
+    try {
+      token = await this._resolveToken(options.credentialsRef || '', options)
+      if (!token) {
+        this.statuses.set(id, 'failed_auth')
+        throw new TransportError('auth', `missing_credentials: ${id}`)
+      }
+
+      const djs = await this._loadDiscord()
+      const intentIds =
+        Array.isArray(options.intents) && options.intents.length
+          ? options.intents
+          : [...LIVE_SMOKE_INTENT_IDS]
+      const intents = resolveGatewayIntents(djs, intentIds)
+
+      client = this.createClient
+        ? await this.createClient({ accountId: id, intents, discord: djs })
+        : new djs.Client({ intents })
+
+      this._wireClient(id, client)
+
+      await client.login(token)
+      this.clients.set(id, { client })
+      this.running.add(id)
+    } catch (err) {
+      const mapped = mapDiscordJsError(err)
+      const isAuth =
+        mapped instanceof TransportError &&
+        (mapped.code === 'auth' || /token|401|unauthorized/i.test(mapped.message))
+      this.statuses.set(id, isAuth ? 'failed_auth' : 'error')
+      this.connected.delete(id)
+      this.running.delete(id)
+      this.clients.delete(id)
+      if (client) {
+        try {
+          await client.destroy?.()
+        } catch {
+          /* ignore */
+        }
+      }
+      this.logger?.warn?.(
+        `discordjs: startAccount failed account=${id} status=${this.statuses.get(id)}`,
+      )
+      throw mapped
+    } finally {
+      token = null
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {any} client
+   */
+  _wireClient(accountId, client) {
+    const onReady = () => {
+      this.connected.add(accountId)
+      this.statuses.set(accountId, 'connected')
+      this.logger?.info?.(`discordjs: account connected account=${accountId}`)
+    }
+    const onDisconnect = () => {
+      this.connected.delete(accountId)
+      if (this.statuses.get(accountId) !== 'failed_auth') {
+        this.statuses.set(accountId, 'disconnected')
+      }
+    }
+    client.on?.('clientReady', onReady)
+    client.on?.('ready', onReady)
+    client.on?.('shardDisconnect', onDisconnect)
+    client.on?.('invalidated', () => {
+      this.statuses.set(accountId, 'failed_auth')
+      this.connected.delete(accountId)
+    })
+    client.on?.('error', (err) => {
+      this.logger?.warn?.(
+        `discordjs: client error account=${accountId} name=${err?.name || 'Error'}`,
+      )
+      if (this.statuses.get(accountId) === 'connected') {
+        this.statuses.set(accountId, 'error')
+      }
+    })
+
+    // Observe rate-limit metadata without claiming a full bucket engine.
+    const rest = client.rest
+    if (rest?.on) {
+      rest.on('rateLimited', (info) => {
+        this.restObservations.push({
+          kind: 'rateLimited',
+          accountId,
+          timeout: info?.timeout,
+          limit: info?.limit,
+          method: info?.method,
+          hash: info?.hash,
+          url: info?.url ? String(info.url).slice(0, 120) : undefined,
+          route: info?.route,
+          global: info?.global,
+        })
+        if (this.restObservations.length > 50) this.restObservations.shift()
+      })
+    }
+
+    client.on?.('messageCreate', (message) => {
+      void this._dispatchMessageCreate(accountId, message)
+    })
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {any} message
+   */
+  async _dispatchMessageCreate(accountId, message) {
+    let event
+    try {
+      event = normalizeMessageCreate(accountId, message)
+    } catch (err) {
+      this.logger?.warn?.(
+        `discordjs: normalize failed account=${accountId} err=${err instanceof Error ? err.message : err}`,
+      )
+      return
+    }
+    for (const handler of [...this.handlers]) {
+      try {
+        await handler(event)
+      } catch (err) {
+        this.logger?.warn?.(
+          `discordjs: inbound handler error account=${accountId} err=${err instanceof Error ? err.message : err}`,
+        )
+      }
+    }
   }
 
   /** @param {string} accountId */
   async stopAccount(accountId) {
-    this.running.delete(accountId)
+    const id = String(accountId)
+    const entry = this.clients.get(id)
+    this.running.delete(id)
+    this.connected.delete(id)
+    this.statuses.set(id, 'disconnected')
+    this.clients.delete(id)
+    if (entry?.client) {
+      try {
+        await entry.client.destroy?.()
+      } catch (err) {
+        this.logger?.warn?.(
+          `discordjs: destroy failed account=${id} err=${err instanceof Error ? err.message : err}`,
+        )
+      }
+    }
   }
 
   /** @param {string} accountId */
@@ -105,15 +405,83 @@ export class DiscordJsTransport {
     }
   }
 
-  async sendMessage() {
-    throw new Error('DiscordJsTransport: live REST not implemented in this spike')
+  /**
+   * @param {string} accountId
+   */
+  _requireClient(accountId) {
+    const entry = this.clients.get(accountId)
+    if (!entry?.client) {
+      throw new TransportError('auth', `account not connected: ${accountId}`)
+    }
+    return entry.client
   }
 
-  async replyMessage() {
-    throw new Error('DiscordJsTransport: live REST not implemented in this spike')
+  /**
+   * @param {string} accountId
+   * @param {string} channelId
+   * @param {OutboundMessage} payload
+   * @returns {Promise<SentMessage>}
+   */
+  async sendMessage(accountId, channelId, payload) {
+    try {
+      const client = this._requireClient(accountId)
+      const channel = await client.channels.fetch(String(channelId))
+      if (!channel || typeof channel.send !== 'function') {
+        throw new TransportError('unknown_target', `channel not sendable: ${channelId}`)
+      }
+      const body = toDiscordMessageBody(payload)
+      const sent = await channel.send(body)
+      return {
+        accountId,
+        channelId: String(channelId),
+        messageId: String(sent.id),
+        guildId: sent.guildId != null ? String(sent.guildId) : undefined,
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
   }
 
-  async editMessage() {
-    throw new Error('DiscordJsTransport: live REST not implemented in this spike')
+  /**
+   * @param {string} accountId
+   * @param {string} channelId
+   * @param {string} messageId
+   * @param {OutboundMessage} payload
+   */
+  async replyMessage(accountId, channelId, messageId, payload) {
+    return this.sendMessage(accountId, channelId, {
+      ...payload,
+      replyTo: messageId,
+    })
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} channelId
+   * @param {string} messageId
+   * @param {OutboundMessage} payload
+   */
+  async editMessage(accountId, channelId, messageId, payload) {
+    try {
+      const client = this._requireClient(accountId)
+      const channel = await client.channels.fetch(String(channelId))
+      if (!channel || typeof channel.messages?.fetch !== 'function') {
+        throw new TransportError('unknown_target', `channel not editable: ${channelId}`)
+      }
+      const msg = await channel.messages.fetch(String(messageId))
+      const body = toDiscordMessageBody(payload)
+      delete body.nonce
+      delete body.enforceNonce
+      delete body.reply
+      const edited = await msg.edit(body)
+      return {
+        accountId,
+        channelId: String(channelId),
+        messageId: String(edited.id),
+        guildId: edited.guildId != null ? String(edited.guildId) : undefined,
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
   }
 }

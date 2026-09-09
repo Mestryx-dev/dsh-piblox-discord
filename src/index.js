@@ -30,7 +30,7 @@ export const name = 'dsh-piblox-discord'
 export const inject = ['conversationBinding', 'agents']
 
 export { FakeTransport, TransportError } from './transport/fake.js'
-export { DiscordJsTransport } from './transport/discordjs.js'
+export { DiscordJsTransport, normalizeMessageCreate, toDiscordMessageBody, LIVE_SMOKE_INTENT_IDS, resolveGatewayIntents } from './transport/discordjs.js'
 export { DiscordSessionBridge, mintDiscordSessionId, extractAssistantText } from './bridge.js'
 export {
   normalizePluginConfig,
@@ -84,7 +84,16 @@ export function createDiscordProvider(deps, config = {}) {
   const transport =
     deps.transport ||
     (bootCfg.transport === 'discordjs'
-      ? new DiscordJsTransport({ allowConnect: false })
+      ? new DiscordJsTransport({
+          allowConnect: Boolean(bootCfg.allowConnect),
+          resolveCredential: async (ref) => {
+            if (!deps.secrets || typeof deps.secrets.resolve !== 'function') {
+              return { ok: false }
+            }
+            return deps.secrets.resolve(ref)
+          },
+          logger: deps.logger,
+        })
       : new FakeTransport())
 
   const clock = deps.clock || new SystemClock()
@@ -123,8 +132,12 @@ export function createDiscordProvider(deps, config = {}) {
     createAccountsConfigStore({ storePath: accountsConfigPath })
 
   // Mutable runtime config — SSOT is the accounts ledger (seeded from Cordis boot once).
-  /** @type {{ transport: string, accounts: Record<string, any> }} */
-  let liveConfig = { transport: bootCfg.transport, accounts: { ...bootCfg.accounts } }
+  /** @type {{ transport: string, allowConnect?: boolean, accounts: Record<string, any> }} */
+  let liveConfig = {
+    transport: bootCfg.transport,
+    allowConnect: bootCfg.allowConnect,
+    accounts: { ...bootCfg.accounts },
+  }
 
   const messages = createOutboundApi({ outbox })
 
@@ -157,6 +170,8 @@ export function createDiscordProvider(deps, config = {}) {
   function applyLiveConfig(next) {
     liveConfig = {
       transport: next.transport || liveConfig.transport,
+      allowConnect:
+        next.allowConnect !== undefined ? Boolean(next.allowConnect) : liveConfig.allowConnect,
       accounts: { ...(next.accounts || {}) },
     }
     for (const key of Object.keys(bridge.accounts)) {
@@ -173,7 +188,13 @@ export function createDiscordProvider(deps, config = {}) {
     outbox,
     logger: deps.logger,
     onConfigChanged: applyLiveConfig,
-    liveGatewayConnected: deps.liveGatewayConnected,
+    liveGatewayConnected: (accountId) =>
+      Boolean(
+        deps.liveGatewayConnected?.(accountId) ||
+          transport.isAccountConnected?.(accountId) ||
+          (transport.isAccountRunning?.(accountId) &&
+            transport.getAccountStatus?.(accountId) === 'connected'),
+      ),
   })
 
   api.accounts = discordAccounts
@@ -188,6 +209,43 @@ export function createDiscordProvider(deps, config = {}) {
     }
     return { processed: total }
   }
+
+  async function startConfiguredAccount(accountId, account) {
+    const ref = account.credentials || credentialSecretName(accountId)
+    let configured = true
+    if (typeof deps.secrets?.hasKey === 'function') {
+      configured = deps.secrets.hasKey(ref)
+    } else if (typeof deps.secrets?.resolve === 'function') {
+      configured = Boolean(deps.secrets.resolve(ref)?.ok)
+    } else if (typeof deps.secrets?.listNames === 'function') {
+      const names = (await deps.secrets.listNames())?.names || []
+      configured = names.includes(ref)
+    } else if (deps.secrets?.store?.listNames) {
+      const names = await deps.secrets.store.listNames()
+      configured = names.includes(ref)
+    } else if (!account.credentials && !deps.secrets) {
+      configured = true
+    } else if (!account.credentials) {
+      configured = false
+    }
+    if (!configured) {
+      deps.logger?.info?.(`discord: skip start ${accountId} (missing_credentials)`)
+      return
+    }
+    try {
+      await transport.startAccount(accountId, {
+        credentialsRef: ref,
+        intents: account.intents,
+      })
+      outbox?.clearAccountIsolation?.(accountId)
+    } catch (err) {
+      // Isolate failure: do not rethrow into Cordis boot.
+      deps.logger?.warn?.(
+        `discord: startAccount isolated failure account=${accountId} err=${err instanceof Error ? err.message : err}`,
+      )
+    }
+  }
+
   api.start = async function start() {
     await accountsConfigStore.seedFromBootConfig(bootCfg)
     applyLiveConfig(accountsConfigStore.snapshot())
@@ -199,31 +257,13 @@ export function createDiscordProvider(deps, config = {}) {
 
     for (const [accountId, account] of Object.entries(liveConfig.accounts)) {
       if (!account.enabled) continue
-      if (liveConfig.transport === 'discordjs') {
+      if (liveConfig.transport === 'discordjs' && !transport.allowConnect) {
+        deps.logger?.info?.(
+          `discord: skip Gateway start ${accountId} (allowConnect=false)`,
+        )
         continue
       }
-      const ref = account.credentials || credentialSecretName(accountId)
-      let configured = true
-      if (typeof deps.secrets?.hasKey === 'function') {
-        configured = deps.secrets.hasKey(ref)
-      } else if (typeof deps.secrets?.resolve === 'function') {
-        configured = Boolean(deps.secrets.resolve(ref)?.ok)
-      } else if (typeof deps.secrets?.listNames === 'function') {
-        const names = (await deps.secrets.listNames())?.names || []
-        configured = names.includes(ref)
-      } else if (deps.secrets?.store?.listNames) {
-        const names = await deps.secrets.store.listNames()
-        configured = names.includes(ref)
-      } else if (!account.credentials && !deps.secrets) {
-        configured = true
-      } else if (!account.credentials) {
-        configured = false
-      }
-      if (!configured) {
-        deps.logger?.info?.(`discord: skip start ${accountId} (missing_credentials)`)
-        continue
-      }
-      await transport.startAccount(accountId, { credentialsRef: ref })
+      await startConfiguredAccount(accountId, account)
     }
   }
   api.stop = async function stop() {
@@ -237,6 +277,9 @@ export function createDiscordProvider(deps, config = {}) {
   api.startAccount = async function startAccount(accountId) {
     const account = liveConfig.accounts[accountId]
     if (!account?.enabled) throw new Error(`account not enabled: ${accountId}`)
+    if (liveConfig.transport === 'discordjs' && !transport.allowConnect) {
+      throw new Error('allowConnect=false — live Gateway blocked')
+    }
     const ref = account.credentials || credentialSecretName(accountId)
     let configured = true
     if (typeof deps.secrets?.hasKey === 'function') {
@@ -255,7 +298,10 @@ export function createDiscordProvider(deps, config = {}) {
     if (!configured) {
       throw new Error(`missing_credentials: ${accountId}`)
     }
-    await transport.startAccount(accountId, { credentialsRef: ref })
+    await transport.startAccount(accountId, {
+      credentialsRef: ref,
+      intents: account.intents,
+    })
     outbox?.clearAccountIsolation?.(accountId)
   }
   api.stopAccount = async function stopAccount(accountId) {
