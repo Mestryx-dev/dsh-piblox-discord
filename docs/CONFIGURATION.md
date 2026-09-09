@@ -38,11 +38,11 @@ discord:
         - MessageContent                 # privileged — enable only if required
       allowed_guilds:
         - "123456789012345678"
-      allowed_channels: []               # empty = all channels in allowed_guilds (PROPOSED)
+      allowed_channels: []               # LOCKED: empty = deny all channels
       denied_channels: []
       dm:
         enabled: true
-        allowed_users: []                # empty + enabled may mean deny-all — OPEN
+        allowed_users: []                # LOCKED: empty = deny all DM users
       bindings:
         - kind: dm
           # uses ConversationBinding keys — see DSH-INTEGRATION.md
@@ -82,9 +82,9 @@ discord:
 | `credentials` | yes | Vault key; resolved via OBSERVED `secrets.resolve` |
 | `enabled` | yes | Soft disable without deleting config |
 | `intents` | yes | Least privilege per account |
-| `allowed_guilds` | yes | Empty + enabled → no guild traffic (PROPOSED fail-closed) |
-| `allowed_channels` / `denied_channels` | no | Channel allow/deny |
-| `dm.enabled` / `allowed_users` | no | DM policy |
+| `allowed_guilds` | yes | **LOCKED:** `[]` = deny all guilds |
+| `allowed_channels` / `denied_channels` | no | **LOCKED:** `allowed_channels: []` = deny all channels; `denied_channels` still deny listed IDs |
+| `dm.enabled` / `allowed_users` | no | **LOCKED:** `allowed_users: []` = deny all DM users (even if `dm.enabled: true`) |
 | `bindings` | yes | Which conversation kinds create bindings |
 | `inbound.*` | no | Mention gates, bot ignore |
 | `proactive_targets` | no | Named aliases for notifications |
@@ -104,8 +104,22 @@ discord:
 - Session store path → ConversationBinding config
 - Discord Application creation in Developer Portal → operator runbook (future)
 
+## Allowlist empty-list semantics (LOCKED)
+
+Fail-closed. Empty allowlists **deny all** traffic for that dimension:
+
+| Field | Empty list means |
+|---|---|
+| `allowed_guilds: []` | deny all guilds |
+| `allowed_channels: []` | deny all channels |
+| `allowed_users: []` | deny all DM users |
+
+Wildcard / broad access requires **explicit opt-in fields** (to be named in the
+implementation Config schema — e.g. `allow_all_guilds: true`). Do **not** treat
+`[]` as “unrestricted”.
+
 ## OPEN
 
-1. Exact Cordis `Config` / Schemastery shape for the plugin package.
-2. Whether `allowed_channels: []` means “all” or “none” — **must lock before coding** (fail-closed recommended).
-3. Privileged intent documentation for operators (Message Content).
+1. Exact Cordis `Config` / Schemastery shape for the plugin package (including
+   explicit opt-in field names for broad access).
+2. Privileged intent documentation for operators (Message Content).

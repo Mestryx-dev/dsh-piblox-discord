@@ -197,8 +197,8 @@ All **policy-gated**. Never claim Discord-impossible operations.
 | Event normalization + unknown-event envelope | V1 MUST | do not silently drop new Gateway events |
 | Tool surface basic | V1 MUST | |
 | Multi-agent binding primitives | V1 SHOULD | routing hints only |
-| Observability integration | V1 MUST | map into closed Core event types (OPEN mapping) |
-| Approval intent relay to `ctx.approval` | V1 SHOULD | OPEN park API gap |
+| Observability integration | V1 MUST | plugin `discord.*` + bridge to closed Core EVENT_TYPES (LOCKED — no Core schema extension in V1) |
+| Approval intent relay to `ctx.approval` | V2 | NON-BLOCKING; no parallel approval store; deferred until stable DSH approval-channel seam |
 
 ## Reliability
 

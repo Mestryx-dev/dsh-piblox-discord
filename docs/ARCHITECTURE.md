@@ -144,13 +144,13 @@ business logic branches (`if vega` is forbidden in Core code).
 ```text
 Discord interaction/event (Gateway now; HTTP later)
   → account_id attach
-  → authorize (guild/channel/user allowlists)     [plugin config]
+  → authorize (guild/channel/user allowlists; `[]` = deny all)  [plugin config LOCKED]
   → inbound dedupe
   → normalize → DiscordNormalizedEvent | UnknownDiscordEvent
   → ConversationBinding.resolveOrCreate(...)     [OBSERVED]
-  → mint/resume DSH session_id via adapter callback  [OPEN — session mint seam]
-  → observability.mint/bind + emit request.received  [OBSERVED types]
-  → consumer routing (session.prompt / agent followup / router)  [PROPOSED]
+  → mint/resume DSH session_id via ctx.agents.create|get|resume  [LOCKED — ADR-0008]
+  → observability.mint/bind + emit request.received  [OBSERVED closed types]
+  → consumer routing (agent.followup / session/event)  [LOCKED — ADR-0008]
   → outbound replies via delivery queue (Components V2 capable)
 ```
 
@@ -188,11 +188,12 @@ Discord interaction
 ```
 
 **OBSERVED gap:** `policy.requestApproval()` currently returns a stub advising
-use of the `tools/pre-execute` park path (`ctx.approval`). Discord HITL relay
-must integrate with that upstream approval surface — see OPEN in
-[DSH-INTEGRATION.md](DSH-INTEGRATION.md).
+use of the `tools/pre-execute` park path (`ctx.approval`). Direct Discord UI
+integration with that approval surface is **NON-BLOCKING / V2** — V1 transports
+generic interactions/intents only; no parallel approval store
+([DSH-INTEGRATION.md](DSH-INTEGRATION.md)).
 
-## 11. Observability boundary (LOCKED intent / OPEN mapping)
+## 11. Observability boundary (LOCKED for V1)
 
 **OBSERVED:** `observability.emit(type, …)` accepts a **closed** `EVENT_TYPES`
 set. Unknown types are rewritten to `request.aborted` with
@@ -200,8 +201,8 @@ set. Unknown types are rewritten to `request.aborted` with
 
 Discord-specific names such as `discord.message.created` are a
 **plugin-normalized event model** (see [EVENT-CONTRACT.md](EVENT-CONTRACT.md)).
-Bridging into Core JSONL must use allowed types + structured payloads, or wait
-for an OPEN contract extension of the event schema.
+Bridging into Core JSONL **must** use existing allowed types + structured
+payloads. Extending Core EVENT_TYPES with `discord.*` is **Rejected for V1**.
 
 ## 12. What we deliberately do not copy
 
@@ -210,10 +211,12 @@ for an OPEN contract extension of the event schema.
 | Atlas Python / discord.py seat | REFERENCE — failure modes (429, partial thread) inform reliability design; **not** legacy message architecture |
 | Community `dsh-discord` | REFERENCE — thin transport + FakeTransport; reject StateStore session map and product AgentController; do not inherit legacy-only component model |
 | Hermes Discord gateway | REFERENCE — multi-channel ops experience; not a dependency |
+| Satori / `@satorijs/adapter-discord` | REFERENCE / rejected V1 transport — Cordis 3.x incompatible; Components V2 gap (ADR-0009) |
 
 ## 13. Implementation structure
 
-File layout and package lockfile remain unspecified until `READY_FOR_IMPLEMENTATION`.
+File layout and package lockfile remain unspecified until the coding mission.
 
-**Client direction is LOCKED** to current `discord.js` 14.x (ADR-0007). Exact pin
-version is chosen at implementation time within 14.x.
+**Client direction is LOCKED** to current `discord.js` 14.x
+(`TRANSPORT_DECISION = LOCKED_DIRECT_DISCORDJS`). Exact compatible pin is chosen
+when the package/lockfile is created (implementation detail, not architecture blocker).

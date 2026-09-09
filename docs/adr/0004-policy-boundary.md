@@ -23,7 +23,8 @@ DSH operations remains with `dsh-policy-engine` and domain policy. The plugin:
 
 - Button handlers stop at normalization + consumer handoff
 - Admin tools are policy-gated
-- Discord approval UX must integrate with existing park path (OPEN details)
+- Discord approval UX must integrate with existing park path when a stable
+  DSH approval-channel seam exists (**NON-BLOCKING / V2**; no parallel store)
 
 ## Rejected alternatives
 

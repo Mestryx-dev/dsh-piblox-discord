@@ -94,24 +94,29 @@ HTTP interaction endpoint   ─┘
 Consumer plugins and ConversationBinding **must not** branch on `delivery_mode`
 for authorization or session identity. V1 may implement Gateway only.
 
-## 5. Relationship to Core observability (OBSERVED + OPEN)
+## 5. Relationship to Core observability (LOCKED for V1)
 
-Plugin-normalized `discord.*` events are **not** automatically valid
-`observability.emit` types (closed set). Bridging:
+Plugin-normalized `discord.*` events are **owned by this plugin** and are
+**not** automatically valid `observability.emit` types (closed Core set).
+
+**V1 LOCKED:**
+
+- Do **not** extend `dsh-observability` `EVENT_TYPES` with `discord.*`
+- Bridge relevant operations to **existing** closed Core event types + payloads
 
 ```text
 discord.message.created
   → (after binding) observability.emit('request.received', { …hashes… })
 discord.button.clicked / discord.select.changed → consumer intent
-  → may later emit approval.* only when wired to real approval path
+  → may later emit approval.* only when wired to real approval path (V2)
 discord.* tool side effects
   → tool.called / tool.returned / tool.failed
 discord.gateway.unknown
-  → plugin log + optional observability request.aborted/system note (OPEN mapping)
+  → plugin log + optional observability request.aborted/system note (mapping PROPOSED)
 ```
 
-**OPEN CONTRACT:** extend Core event schema with `discord.*` vs keep dual-layer
-(plugin log + Core bridge).
+Core schema extension with first-class `discord.*` EVENT_TYPES remains **out of
+scope for V1** (Rejected for V1; revisit only with an observability Core change).
 
 ## 6. Payload sketches (PROPOSED, non-normative)
 

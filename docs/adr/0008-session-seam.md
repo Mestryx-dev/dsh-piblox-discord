@@ -28,8 +28,9 @@ Do **not** require `dsh-router` on the chat path.
 
 - Plugin must retain/dispose `AgentHandle`s carefully (dispose removes session).
 - Inject minimum includes `agents`, `conversationBinding`, `secrets`.
-- READY_FOR_IMPLEMENTATION may flip YES for the session seam; Discord approval
-  channel and Core event-type extension remain separate OPEN items.
+- READY_FOR_IMPLEMENTATION may flip YES for the session seam; Discord
+  `approvalChannel` / `ctx.approval` UI and Core EVENT_TYPES `discord.*`
+  extension are closed separately (V2 / Rejected-for-V1 — see DESIGN-STATUS).
 
 ## Rejected alternatives
 

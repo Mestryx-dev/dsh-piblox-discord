@@ -48,7 +48,7 @@ and domain checks.
 
 ## 4. Allowlists & intents
 
-- Guild / channel / user allowlists (PROPOSED fail-closed defaults).
+- Guild / channel / user allowlists (**LOCKED** fail-closed: `[]` = deny all).
 - Privileged intents (e.g. Message Content) only when required.
 - Bot Discord permissions least-privilege per account role.
 

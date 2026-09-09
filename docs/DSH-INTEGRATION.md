@@ -301,13 +301,16 @@ Manifest: Cordis bundle row via `cordis.patch.yml` / `package.json` `dsh.bundle.
 - Service `policy`; APPROVAL park via `tools/pre-execute` + `ctx.approval`.
 - `policy.requestApproval()` remains a stub.
 
-**OPEN CONTRACT:** Discord as `approvalChannel` / park UX (not a session-seam blocker).
+**NON-BLOCKING / V2:** Discord as `approvalChannel` / direct UI integration with
+`ctx.approval` is deferred until DSH exposes a stable approval-channel seam.
+V1 transports generic Discord interactions/intents only — **no** parallel
+approval store in this plugin.
 
-### Observability (OBSERVED)
+### Observability (OBSERVED + LOCKED for V1)
 
-- Closed `EVENT_TYPES`; bridge Discord via allowed Core types + payloads.
-
-**OPEN CONTRACT:** whether Core gains `discord.*` event types later.
+- Closed Core `EVENT_TYPES`; bridge Discord via allowed Core types + payloads.
+- Plugin owns normalized `discord.*` events.
+- Do **not** extend `dsh-observability` EVENT_TYPES in V1.
 
 ---
 
@@ -321,9 +324,11 @@ secrets.resolve(ref) → { ok, value? }
 
 ## 10. Remaining OPEN (non-session)
 
-1. Discord approval channel vs `ctx.approval` park path.
-2. Core `EVENT_TYPES` Discord extension vs payload-bridge only.
-3. Config allowlist empty-list semantics.
-4. Exact `discord.js` 14.x pin.
-5. Profile wiring / activation (forbidden until operator authorizes).
-6. Dedicated `MessageSource.kind` for Discord (may start as `user`).
+1. Profile wiring / activation (forbidden until operator authorizes).
+2. Dedicated `MessageSource.kind` for Discord (may start as `user`).
+3. Exact Cordis Config / Schemastery shape (including explicit allowlist opt-in field names).
+4. Exact `discord.js` 14.x pin — **implementation detail** at package/lockfile creation (architecture remains 14.x).
+
+**Closed (2026-09-09):** allowlist empty-list = deny all; V1 observability
+bridge-only (no Core EVENT_TYPES extension); approvalChannel = V2 / non-blocking;
+transport = `LOCKED_DIRECT_DISCORDJS` (ADR-0009).
