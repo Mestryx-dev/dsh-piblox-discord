@@ -11,10 +11,230 @@ window.__ModuleLoader__.load({
     let useState = react.useState;
     let useEffect = react.useEffect;
     let useCallback = react.useCallback;
+    let useId = react.useId || (() => "dsh-discord-" + Math.random().toString(36).slice(2, 9));
 
     const SECTION_ID = "discord";
     const LOCALE_NS = "settings.discord";
     const API = "/api/discord";
+
+    // Common intents stay expanded; remaining intents collapse under Advanced.
+    // Keep in sync with src/client/ui-model.js COMMON_INTENT_IDS.
+    const COMMON_INTENT_IDS = ["Guilds", "GuildMessages", "DirectMessages", "MessageContent"];
+
+    /**
+     * Visual language mirrors @deepseek-ai/dsh-client-ui-primitives (Button / Pill / Input)
+     * and ui-settings-plugins fields.module.css via --dsw-alias-* tokens.
+     * Plugin ModuleLoader clients cannot import CSS modules from those packages.
+     */
+    const css = {
+      page: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "1.25rem",
+        maxWidth: "40rem",
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      title: {
+        margin: 0,
+        fontSize: "1.25rem",
+        letterSpacing: "-0.02em",
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      subtitle: {
+        margin: "0.25rem 0 0",
+        fontSize: "0.9rem",
+        lineHeight: 1.4,
+        color: "var(--dsw-alias-label-secondary, inherit)",
+        opacity: 0.9,
+      },
+      section: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.65rem",
+        padding: "0.85rem 0",
+        borderTop: "0.5px solid var(--dsw-alias-border-l2, color-mix(in oklab, CanvasText 12%, transparent))",
+      },
+      sectionFirst: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.65rem",
+        padding: "0.25rem 0 0.85rem",
+      },
+      sectionTitle: {
+        margin: 0,
+        fontSize: "13px",
+        fontWeight: 600,
+        lineHeight: 1.5,
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      field: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+      },
+      label: {
+        fontSize: "13px",
+        fontWeight: 500,
+        lineHeight: 1.5,
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      hint: {
+        margin: 0,
+        fontSize: "12px",
+        lineHeight: 1.5,
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+        opacity: 0.95,
+      },
+      input: {
+        height: "34px",
+        padding: "0 12px",
+        boxSizing: "border-box",
+        width: "100%",
+        border: "0.5px solid var(--dsw-alias-border-l4, color-mix(in oklab, CanvasText 18%, transparent))",
+        borderRadius: "8px",
+        background: "var(--dsw-alias-bg-layer-3, transparent)",
+        font: "inherit",
+        fontSize: "13px",
+        lineHeight: 1.5,
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      textarea: {
+        minHeight: "4.5rem",
+        padding: "8px 12px",
+        boxSizing: "border-box",
+        width: "100%",
+        border: "0.5px solid var(--dsw-alias-border-l4, color-mix(in oklab, CanvasText 18%, transparent))",
+        borderRadius: "8px",
+        background: "var(--dsw-alias-bg-layer-3, transparent)",
+        font: "inherit",
+        fontSize: "13px",
+        lineHeight: 1.5,
+        color: "var(--dsw-alias-label-primary, inherit)",
+        resize: "vertical",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+      },
+      checkRow: {
+        display: "flex",
+        gap: "0.5rem",
+        alignItems: "flex-start",
+        fontSize: "13px",
+        lineHeight: 1.45,
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      btnPrimary: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "4px",
+        height: "36px",
+        padding: "0 14px",
+        border: "none",
+        borderRadius: "18px",
+        cursor: "pointer",
+        fontSize: "14px",
+        lineHeight: "22px",
+        background: "var(--dsw-alias-button-primary-fill, CanvasText)",
+        color: "var(--dsw-alias-label-primary-foreground, Canvas)",
+      },
+      btnOutline: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "4px",
+        height: "36px",
+        padding: "0 14px",
+        borderRadius: "18px",
+        cursor: "pointer",
+        fontSize: "14px",
+        lineHeight: "22px",
+        border: "0.5px solid var(--dsw-alias-border-l3, color-mix(in oklab, CanvasText 22%, transparent))",
+        background: "transparent",
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      btnSm: {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "28px",
+        padding: "0 10px",
+        borderRadius: "14px",
+        cursor: "pointer",
+        fontSize: "12px",
+        lineHeight: "18px",
+        border: "0.5px solid var(--dsw-alias-border-l3, color-mix(in oklab, CanvasText 22%, transparent))",
+        background: "transparent",
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+      pill: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "4px",
+        height: "24px",
+        padding: "0 8px",
+        borderRadius: "12px",
+        fontSize: "12px",
+        lineHeight: "18px",
+        color: "var(--dsw-alias-label-secondary, inherit)",
+        background: "var(--dsw-alias-bg-layer-2, color-mix(in oklab, Canvas 92%, CanvasText 8%))",
+        whiteSpace: "nowrap",
+      },
+      pillWarn: {
+        color: "var(--dsw-alias-label-warning, #b45309)",
+        background: "color-mix(in oklab, var(--dsw-alias-label-warning, #b45309) 14%, transparent)",
+      },
+      pillError: {
+        color: "var(--dsw-alias-label-error, tomato)",
+        background: "color-mix(in oklab, var(--dsw-alias-label-error, tomato) 14%, transparent)",
+      },
+      pillOk: {
+        color: "var(--dsw-alias-label-success, #15803d)",
+        background: "color-mix(in oklab, var(--dsw-alias-label-success, #15803d) 14%, transparent)",
+      },
+      card: {
+        padding: "0.85rem 0.9rem",
+        borderRadius: "12px",
+        border: "0.5px solid var(--dsw-alias-border-l2, color-mix(in oklab, CanvasText 12%, transparent))",
+        background: "var(--dsw-alias-bg-layer-2, color-mix(in oklab, Canvas 92%, CanvasText 8%))",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.55rem",
+      },
+      error: {
+        margin: 0,
+        fontSize: "12px",
+        lineHeight: 1.5,
+        color: "var(--dsw-alias-label-error, tomato)",
+      },
+      row: {
+        display: "flex",
+        gap: "0.5rem",
+        flexWrap: "wrap",
+        alignItems: "center",
+      },
+      metaRow: {
+        display: "grid",
+        gridTemplateColumns: "5.5rem 1fr",
+        gap: "0.35rem 0.75rem",
+        fontSize: "12px",
+        lineHeight: 1.45,
+        color: "var(--dsw-alias-label-secondary, inherit)",
+      },
+      metaKey: {
+        color: "var(--dsw-alias-label-tertiary, inherit)",
+      },
+      details: {
+        border: "0.5px solid var(--dsw-alias-border-l2, color-mix(in oklab, CanvasText 12%, transparent))",
+        borderRadius: "8px",
+        padding: "0.5rem 0.75rem",
+      },
+      detailsSummary: {
+        cursor: "pointer",
+        fontSize: "13px",
+        fontWeight: 500,
+        color: "var(--dsw-alias-label-primary, inherit)",
+      },
+    };
 
     const DICT = {
       en: {
@@ -37,8 +257,16 @@ window.__ModuleLoader__.load({
         replaceToken: "Replace token",
         removeToken: "Remove token",
         confirmRemoveToken: "Remove bot token for this account? The account stays configured.",
-        confirmDelete: "Delete this Discord account config? Bindings/outbox are kept.",
+        confirmDelete: "Delete this Discord account config? Bindings and outbox are kept.",
         deleteSecretToo: "Also delete vault secret",
+        deleteSecretHint: "Optional. Unchecked keeps the secret in Settings → Secrets.",
+        sectionGeneral: "General",
+        sectionIntents: "Gateway intents",
+        sectionGuilds: "Guild access",
+        sectionChannels: "Channel access",
+        sectionDm: "Direct messages",
+        sectionBehavior: "Behavior",
+        advancedIntents: "Advanced intents",
         allowAllGuilds: "Allow all guilds",
         allowAllChannels: "Allow all channels",
         allowAllUsers: "Allow all DM users",
@@ -46,14 +274,22 @@ window.__ModuleLoader__.load({
         allowedChannels: "Allowed channel IDs",
         dmEnabled: "Enable DMs",
         dmUsers: "Allowed DM user IDs",
+        emptyDenyAll: "Empty list = deny all",
         ignoreBots: "Ignore bot messages",
-        intents: "Gateway intents",
         privileged: "privileged",
         status: "Status",
-        failClosedHint: "Empty allowlists deny all. Broad access requires the Allow all checkbox.",
+        statusLine: "Status",
+        tokenLine: "Token",
+        guildsLine: "Guilds",
+        channelsLine: "Channels",
+        dmsLine: "DMs",
         loading: "Loading…",
         error: "Something went wrong",
         snowflakeHint: "One Discord snowflake per line (decimal string)",
+        scopeAllowAll: "allow all",
+        scopeDenyAll: "deny all",
+        scopeDisabled: "disabled",
+        scopeAllowAllUsers: "allow all users",
       },
     };
 
@@ -88,23 +324,122 @@ window.__ModuleLoader__.load({
       return (list || []).join("\n");
     }
 
-    const fieldStyle = {
-      display: "flex",
-      flexDirection: "column",
-      gap: "0.25rem",
-      fontSize: "0.8rem",
-    };
-    const inputStyle = {
-      padding: "0.45rem 0.6rem",
-      borderRadius: "0.4rem",
-      border: "1px solid color-mix(in oklab, CanvasText 18%, transparent)",
-      background: "transparent",
-      color: "inherit",
-      font: "inherit",
-    };
+    function partitionIntents(intents) {
+      const list = Array.isArray(intents) ? intents : [];
+      const commonIds = new Set(COMMON_INTENT_IDS);
+      const common = [];
+      const advanced = [];
+      for (const intent of list) {
+        if (commonIds.has(intent.id)) common.push(intent);
+        else advanced.push(intent);
+      }
+      common.sort((a, b) => COMMON_INTENT_IDS.indexOf(a.id) - COMMON_INTENT_IDS.indexOf(b.id));
+      return { common: common, advanced: advanced };
+    }
+
+    function formatScope(kind, code, t) {
+      const c = code || "deny_all";
+      if (kind === "dm") {
+        if (c === "disabled") return t("scopeDisabled");
+        if (c === "all_users") return t("scopeAllowAllUsers");
+        if (c === "deny_all") return t("scopeDenyAll");
+        if (String(c).endsWith("_users")) return String(c).replace(/_users$/, "") + " users";
+        return c;
+      }
+      if (c === "all") return t("scopeAllowAll");
+      if (c === "deny_all") return t("scopeDenyAll");
+      return c + " listed";
+    }
+
+    function statusPillStyle(status) {
+      if (status === "connected") return { ...css.pill, ...css.pillOk };
+      if (status === "missing_credentials" || status === "rate_limited") return { ...css.pill, ...css.pillWarn };
+      if (status === "failed_auth" || status === "error") return { ...css.pill, ...css.pillError };
+      return css.pill;
+    }
+
+    function Field({ id, label, hint, children }) {
+      return jsxs("div", {
+        style: css.field,
+        children: [
+          jsx("label", { htmlFor: id, style: css.label, children: label }),
+          children,
+          hint ? jsx("p", { style: css.hint, children: hint }) : null,
+        ],
+      });
+    }
+
+    function Check({ id, checked, onChange, label }) {
+      return jsxs("label", {
+        htmlFor: id,
+        style: css.checkRow,
+        children: [
+          jsx("input", {
+            id: id,
+            type: "checkbox",
+            checked: checked,
+            onChange: onChange,
+            style: { marginTop: "0.15rem" },
+          }),
+          jsx("span", { children: label }),
+        ],
+      });
+    }
+
+    function Section({ title, first, children }) {
+      return jsxs("section", {
+        style: first ? css.sectionFirst : css.section,
+        children: [
+          jsx("h3", { style: css.sectionTitle, children: title }),
+          children,
+        ],
+      });
+    }
+
+    function IntentChecks({ intents, selected, onToggle, idPrefix, t }) {
+      return jsx("div", {
+        style: { display: "flex", flexDirection: "column", gap: "0.35rem" },
+        children: intents.map((intent) =>
+          jsxs(
+            "label",
+            {
+              htmlFor: idPrefix + "-" + intent.id,
+              style: css.checkRow,
+              children: [
+                jsx("input", {
+                  id: idPrefix + "-" + intent.id,
+                  type: "checkbox",
+                  checked: selected.has(intent.id),
+                  onChange: () => onToggle(intent.id),
+                  style: { marginTop: "0.15rem" },
+                }),
+                jsxs("span", {
+                  children: [
+                    intent.label,
+                    intent.privileged
+                      ? jsx("span", {
+                          style: {
+                            marginLeft: "0.4rem",
+                            ...css.pill,
+                            height: "20px",
+                            fontSize: "11px",
+                          },
+                          children: t("privileged"),
+                        })
+                      : null,
+                  ],
+                }),
+              ],
+            },
+            intent.id,
+          ),
+        ),
+      });
+    }
 
     function AccountForm({ initial, meta, t, onCancel, onSaved }) {
       const isNew = !initial;
+      const baseId = useId();
       const [accountId, setAccountId] = useState(initial ? initial.account_id : "");
       const [label, setLabel] = useState(initial ? initial.label || "" : "");
       const [enabled, setEnabled] = useState(initial ? initial.enabled : true);
@@ -125,10 +460,16 @@ window.__ModuleLoader__.load({
       );
       const [ignoreBots, setIgnoreBots] = useState(initial ? initial.ignoreBots !== false : true);
       const [intents, setIntents] = useState(
-        new Set((initial && initial.intents) || (meta.intents || []).filter((i) => i.default).map((i) => i.id)),
+        new Set(
+          (initial && initial.intents) ||
+            (meta.intents || []).filter((i) => i.default).map((i) => i.id),
+        ),
       );
       const [busy, setBusy] = useState(false);
       const [err, setErr] = useState("");
+
+      const partitioned = partitionIntents(meta.intents || []);
+      const tokenConfigured = Boolean(initial && initial.credentials && initial.credentials.configured);
 
       function toggleIntent(id) {
         setIntents((prev) => {
@@ -154,8 +495,8 @@ window.__ModuleLoader__.load({
             allowedChannels: allowAllChannels ? [] : linesToList(channels),
             dm: {
               enabled: dmEnabled,
-              allowAllUsers,
-              allowedUsers: allowAllUsers ? [] : linesToList(dmUsers),
+              allowAllUsers: dmEnabled ? allowAllUsers : false,
+              allowedUsers: !dmEnabled || allowAllUsers ? [] : linesToList(dmUsers),
             },
             ignoreBots,
           };
@@ -188,239 +529,396 @@ window.__ModuleLoader__.load({
         }
       }
 
+      async function onRemoveToken() {
+        if (!initial) return;
+        if (!confirm(t("confirmRemoveToken"))) return;
+        setBusy(true);
+        setErr("");
+        try {
+          await api("/accounts/" + encodeURIComponent(initial.account_id) + "/credential", {
+            method: "DELETE",
+          });
+          setReplacing(false);
+          setToken("");
+          onSaved();
+        } catch (ex) {
+          setErr((ex && ex.message) || t("error"));
+        } finally {
+          setBusy(false);
+        }
+      }
+
       return jsxs("form", {
         onSubmit: onSubmit,
-        style: { display: "flex", flexDirection: "column", gap: "0.75rem", maxWidth: "40rem" },
+        style: css.page,
+        "aria-label": isNew ? t("add") : t("edit"),
         children: [
-          jsx("p", { style: { margin: 0, fontSize: "0.85rem", opacity: 0.75 }, children: t("failClosedHint") }),
-          isNew
-            ? jsxs("label", {
-                style: fieldStyle,
-                children: [
-                  t("accountId"),
-                  jsx("input", {
-                    required: true,
-                    value: accountId,
-                    placeholder: t("accountIdHint"),
-                    autoComplete: "off",
-                    spellCheck: false,
-                    onChange: (ev) => setAccountId(ev.target.value),
-                    style: inputStyle,
+          jsx(Section, {
+            title: t("sectionGeneral"),
+            first: true,
+            children: jsxs("div", {
+              style: { display: "flex", flexDirection: "column", gap: "0.65rem" },
+              children: [
+                isNew
+                  ? jsx(Field, {
+                      id: baseId + "-accountId",
+                      label: t("accountId"),
+                      hint: t("accountIdHint"),
+                      children: jsx("input", {
+                        id: baseId + "-accountId",
+                        required: true,
+                        value: accountId,
+                        placeholder: "lab",
+                        autoComplete: "off",
+                        spellCheck: false,
+                        onChange: (ev) => setAccountId(ev.target.value),
+                        style: css.input,
+                      }),
+                    })
+                  : jsxs("div", {
+                      style: css.field,
+                      children: [
+                        jsx("div", { style: css.label, children: t("accountId") }),
+                        jsx("code", { style: { fontSize: "13px" }, children: initial.account_id }),
+                      ],
+                    }),
+                jsx(Field, {
+                  id: baseId + "-label",
+                  label: t("label"),
+                  children: jsx("input", {
+                    id: baseId + "-label",
+                    value: label,
+                    onChange: (ev) => setLabel(ev.target.value),
+                    style: css.input,
                   }),
-                ],
-              })
-            : jsx("div", {
-                style: { fontSize: "0.85rem" },
-                children: jsxs("code", { children: [initial.account_id] }),
-              }),
-          jsxs("label", {
-            style: fieldStyle,
+                }),
+                jsx(Check, {
+                  id: baseId + "-enabled",
+                  checked: enabled,
+                  onChange: (ev) => setEnabled(ev.target.checked),
+                  label: t("enable"),
+                }),
+                isNew
+                  ? jsx(Field, {
+                      id: baseId + "-token",
+                      label: t("token"),
+                      children: jsx("input", {
+                        id: baseId + "-token",
+                        type: "password",
+                        value: token,
+                        autoComplete: "new-password",
+                        onChange: (ev) => setToken(ev.target.value),
+                        style: css.input,
+                      }),
+                    })
+                  : jsxs("div", {
+                      style: { display: "flex", flexDirection: "column", gap: "0.45rem" },
+                      children: [
+                        jsxs("div", {
+                          style: css.row,
+                          children: [
+                            jsx("span", { style: css.label, children: t("token") + ":" }),
+                            jsx("span", {
+                              style: tokenConfigured ? { ...css.pill, ...css.pillOk } : css.pill,
+                              children: tokenConfigured ? t("tokenConfigured") : t("tokenMissing"),
+                            }),
+                          ],
+                        }),
+                        jsxs("div", {
+                          style: css.row,
+                          children: [
+                            !replacing
+                              ? jsx("button", {
+                                  type: "button",
+                                  style: css.btnSm,
+                                  onClick: () => setReplacing(true),
+                                  children: t("replaceToken"),
+                                })
+                              : jsx(Field, {
+                                  id: baseId + "-token-replace",
+                                  label: t("token"),
+                                  children: jsx("input", {
+                                    id: baseId + "-token-replace",
+                                    type: "password",
+                                    value: token,
+                                    autoComplete: "new-password",
+                                    onChange: (ev) => setToken(ev.target.value),
+                                    style: css.input,
+                                  }),
+                                }),
+                            tokenConfigured
+                              ? jsx("button", {
+                                  type: "button",
+                                  style: css.btnSm,
+                                  onClick: () => void onRemoveToken(),
+                                  disabled: busy,
+                                  children: t("removeToken"),
+                                })
+                              : null,
+                          ],
+                        }),
+                      ],
+                    }),
+              ],
+            }),
+          }),
+
+          jsx(Section, {
+            title: t("sectionIntents"),
+            children: jsxs("div", {
+              style: { display: "flex", flexDirection: "column", gap: "0.65rem" },
+              children: [
+                jsx(IntentChecks, {
+                  intents: partitioned.common,
+                  selected: intents,
+                  onToggle: toggleIntent,
+                  idPrefix: baseId + "-intent",
+                  t: t,
+                }),
+                partitioned.advanced.length
+                  ? jsxs("details", {
+                      style: css.details,
+                      children: [
+                        jsx("summary", {
+                          style: css.detailsSummary,
+                          children: t("advancedIntents"),
+                        }),
+                        jsx("div", {
+                          style: { marginTop: "0.55rem" },
+                          children: jsx(IntentChecks, {
+                            intents: partitioned.advanced,
+                            selected: intents,
+                            onToggle: toggleIntent,
+                            idPrefix: baseId + "-adv-intent",
+                            t: t,
+                          }),
+                        }),
+                      ],
+                    })
+                  : null,
+              ],
+            }),
+          }),
+
+          jsx(Section, {
+            title: t("sectionGuilds"),
+            children: jsxs("div", {
+              style: { display: "flex", flexDirection: "column", gap: "0.55rem" },
+              children: [
+                jsx(Check, {
+                  id: baseId + "-all-guilds",
+                  checked: allowAllGuilds,
+                  onChange: (ev) => setAllowAllGuilds(ev.target.checked),
+                  label: t("allowAllGuilds"),
+                }),
+                !allowAllGuilds
+                  ? jsx(Field, {
+                      id: baseId + "-guilds",
+                      label: t("allowedGuilds"),
+                      hint: t("emptyDenyAll") + " · " + t("snowflakeHint"),
+                      children: jsx("textarea", {
+                        id: baseId + "-guilds",
+                        value: guilds,
+                        onChange: (ev) => setGuilds(ev.target.value),
+                        rows: 3,
+                        style: css.textarea,
+                      }),
+                    })
+                  : null,
+              ],
+            }),
+          }),
+
+          jsx(Section, {
+            title: t("sectionChannels"),
+            children: jsxs("div", {
+              style: { display: "flex", flexDirection: "column", gap: "0.55rem" },
+              children: [
+                jsx(Check, {
+                  id: baseId + "-all-channels",
+                  checked: allowAllChannels,
+                  onChange: (ev) => setAllowAllChannels(ev.target.checked),
+                  label: t("allowAllChannels"),
+                }),
+                !allowAllChannels
+                  ? jsx(Field, {
+                      id: baseId + "-channels",
+                      label: t("allowedChannels"),
+                      hint: t("emptyDenyAll") + " · " + t("snowflakeHint"),
+                      children: jsx("textarea", {
+                        id: baseId + "-channels",
+                        value: channels,
+                        onChange: (ev) => setChannels(ev.target.value),
+                        rows: 3,
+                        style: css.textarea,
+                      }),
+                    })
+                  : null,
+              ],
+            }),
+          }),
+
+          jsx(Section, {
+            title: t("sectionDm"),
+            children: jsxs("div", {
+              style: { display: "flex", flexDirection: "column", gap: "0.55rem" },
+              children: [
+                jsx(Check, {
+                  id: baseId + "-dm-enabled",
+                  checked: dmEnabled,
+                  onChange: (ev) => setDmEnabled(ev.target.checked),
+                  label: t("dmEnabled"),
+                }),
+                dmEnabled
+                  ? jsxs("div", {
+                      style: { display: "flex", flexDirection: "column", gap: "0.55rem" },
+                      children: [
+                        jsx(Check, {
+                          id: baseId + "-dm-all",
+                          checked: allowAllUsers,
+                          onChange: (ev) => setAllowAllUsers(ev.target.checked),
+                          label: t("allowAllUsers"),
+                        }),
+                        !allowAllUsers
+                          ? jsx(Field, {
+                              id: baseId + "-dm-users",
+                              label: t("dmUsers"),
+                              hint: t("emptyDenyAll") + " · " + t("snowflakeHint"),
+                              children: jsx("textarea", {
+                                id: baseId + "-dm-users",
+                                value: dmUsers,
+                                onChange: (ev) => setDmUsers(ev.target.value),
+                                rows: 3,
+                                style: css.textarea,
+                              }),
+                            })
+                          : null,
+                      ],
+                    })
+                  : jsx("p", { style: css.hint, children: t("scopeDisabled") }),
+              ],
+            }),
+          }),
+
+          jsx(Section, {
+            title: t("sectionBehavior"),
+            children: jsx(Check, {
+              id: baseId + "-ignore-bots",
+              checked: ignoreBots,
+              onChange: (ev) => setIgnoreBots(ev.target.checked),
+              label: t("ignoreBots"),
+            }),
+          }),
+
+          jsxs("div", {
+            style: css.row,
             children: [
-              t("label"),
-              jsx("input", {
-                value: label,
-                onChange: (ev) => setLabel(ev.target.value),
-                style: inputStyle,
+              jsx("button", {
+                type: "submit",
+                disabled: busy,
+                style: { ...css.btnPrimary, opacity: busy ? 0.4 : 1 },
+                children: busy ? t("loading") : t("save"),
+              }),
+              jsx("button", {
+                type: "button",
+                style: css.btnOutline,
+                onClick: onCancel,
+                children: t("cancel"),
               }),
             ],
           }),
-          jsxs("label", {
-            style: { display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.85rem" },
+          err ? jsx("p", { role: "alert", style: css.error, children: err }) : null,
+        ],
+      });
+    }
+
+    function AccountCard({ item, t, deleteSecret, setDeleteSecret, onEdit, onDelete, onRemoveToken }) {
+      const summary = item.scope_summary || {};
+      const configured = Boolean(item.credentials && item.credentials.configured);
+      return jsxs("article", {
+        style: css.card,
+        "aria-label": item.label || item.account_id,
+        children: [
+          jsxs("div", {
+            style: { display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" },
             children: [
-              jsx("input", {
-                type: "checkbox",
-                checked: enabled,
-                onChange: (ev) => setEnabled(ev.target.checked),
-              }),
-              t("enable"),
-            ],
-          }),
-          isNew
-            ? jsxs("label", {
-                style: fieldStyle,
+              jsxs("div", {
                 children: [
-                  t("token"),
-                  jsx("input", {
-                    type: "password",
-                    value: token,
-                    autoComplete: "new-password",
-                    onChange: (ev) => setToken(ev.target.value),
-                    style: inputStyle,
+                  jsx("strong", {
+                    style: { fontSize: "14px", color: "var(--dsw-alias-label-primary, inherit)" },
+                    children: item.label || item.account_id,
                   }),
-                ],
-              })
-            : jsxs("div", {
-                style: { display: "flex", flexDirection: "column", gap: "0.35rem" },
-                children: [
                   jsx("div", {
-                    style: { fontSize: "0.85rem" },
-                    children:
-                      initial.credentials && initial.credentials.configured
-                        ? t("tokenConfigured")
-                        : t("tokenMissing"),
-                  }),
-                  !replacing
-                    ? jsx("button", {
-                        type: "button",
-                        onClick: () => setReplacing(true),
-                        children: t("replaceToken"),
-                      })
-                    : jsxs("label", {
-                        style: fieldStyle,
-                        children: [
-                          t("token"),
-                          jsx("input", {
-                            type: "password",
-                            value: token,
-                            autoComplete: "new-password",
-                            onChange: (ev) => setToken(ev.target.value),
-                            style: inputStyle,
-                          }),
-                        ],
-                      }),
-                ],
-              }),
-          jsxs("fieldset", {
-            style: { border: "1px solid color-mix(in oklab, CanvasText 18%, transparent)", borderRadius: "0.5rem", padding: "0.75rem" },
-            children: [
-              jsx("legend", { children: t("intents") }),
-              (meta.intents || []).map((intent) =>
-                jsxs(
-                  "label",
-                  {
-                    style: { display: "flex", gap: "0.4rem", alignItems: "center", fontSize: "0.8rem", marginBottom: "0.25rem" },
-                    children: [
-                      jsx("input", {
-                        type: "checkbox",
-                        checked: intents.has(intent.id),
-                        onChange: () => toggleIntent(intent.id),
-                      }),
-                      intent.label,
-                      intent.privileged
-                        ? jsx("span", { style: { opacity: 0.55, fontSize: "0.7rem" }, children: "(" + t("privileged") + ")" })
-                        : null,
-                    ],
-                  },
-                  intent.id,
-                ),
-              ),
-            ],
-          }),
-          jsxs("label", {
-            style: { display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.85rem" },
-            children: [
-              jsx("input", {
-                type: "checkbox",
-                checked: allowAllGuilds,
-                onChange: (ev) => setAllowAllGuilds(ev.target.checked),
-              }),
-              t("allowAllGuilds"),
-            ],
-          }),
-          !allowAllGuilds
-            ? jsxs("label", {
-                style: fieldStyle,
-                children: [
-                  t("allowedGuilds"),
-                  jsx("textarea", {
-                    value: guilds,
-                    placeholder: t("snowflakeHint"),
-                    onChange: (ev) => setGuilds(ev.target.value),
-                    rows: 3,
-                    style: inputStyle,
+                    style: {
+                      fontSize: "12px",
+                      color: "var(--dsw-alias-label-tertiary, inherit)",
+                    },
+                    children: item.account_id,
                   }),
                 ],
-              })
-            : null,
-          jsxs("label", {
-            style: { display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.85rem" },
-            children: [
-              jsx("input", {
-                type: "checkbox",
-                checked: allowAllChannels,
-                onChange: (ev) => setAllowAllChannels(ev.target.checked),
               }),
-              t("allowAllChannels"),
-            ],
-          }),
-          !allowAllChannels
-            ? jsxs("label", {
-                style: fieldStyle,
-                children: [
-                  t("allowedChannels"),
-                  jsx("textarea", {
-                    value: channels,
-                    placeholder: t("snowflakeHint"),
-                    onChange: (ev) => setChannels(ev.target.value),
-                    rows: 3,
-                    style: inputStyle,
-                  }),
-                ],
-              })
-            : null,
-          jsxs("label", {
-            style: { display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.85rem" },
-            children: [
-              jsx("input", {
-                type: "checkbox",
-                checked: dmEnabled,
-                onChange: (ev) => setDmEnabled(ev.target.checked),
+              jsx("span", {
+                style: statusPillStyle(item.status),
+                children: item.status,
               }),
-              t("dmEnabled"),
-            ],
-          }),
-          dmEnabled
-            ? jsxs("div", {
-                style: { display: "flex", flexDirection: "column", gap: "0.5rem" },
-                children: [
-                  jsxs("label", {
-                    style: { display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.85rem" },
-                    children: [
-                      jsx("input", {
-                        type: "checkbox",
-                        checked: allowAllUsers,
-                        onChange: (ev) => setAllowAllUsers(ev.target.checked),
-                      }),
-                      t("allowAllUsers"),
-                    ],
-                  }),
-                  !allowAllUsers
-                    ? jsxs("label", {
-                        style: fieldStyle,
-                        children: [
-                          t("dmUsers"),
-                          jsx("textarea", {
-                            value: dmUsers,
-                            placeholder: t("snowflakeHint"),
-                            onChange: (ev) => setDmUsers(ev.target.value),
-                            rows: 2,
-                            style: inputStyle,
-                          }),
-                        ],
-                      })
-                    : null,
-                ],
-              })
-            : null,
-          jsxs("label", {
-            style: { display: "flex", gap: "0.5rem", alignItems: "center", fontSize: "0.85rem" },
-            children: [
-              jsx("input", {
-                type: "checkbox",
-                checked: ignoreBots,
-                onChange: (ev) => setIgnoreBots(ev.target.checked),
-              }),
-              t("ignoreBots"),
             ],
           }),
           jsxs("div", {
-            style: { display: "flex", gap: "0.5rem" },
+            style: css.metaRow,
             children: [
-              jsx("button", { type: "submit", disabled: busy, children: busy ? t("loading") : t("save") }),
-              jsx("button", { type: "button", onClick: onCancel, children: t("cancel") }),
+              jsx("span", { style: css.metaKey, children: t("tokenLine") }),
+              jsx("span", {
+                children: configured ? t("tokenConfigured") : t("tokenMissing"),
+              }),
+              jsx("span", { style: css.metaKey, children: t("guildsLine") }),
+              jsx("span", { children: formatScope("guilds", summary.guilds, t) }),
+              jsx("span", { style: css.metaKey, children: t("channelsLine") }),
+              jsx("span", { children: formatScope("channels", summary.channels, t) }),
+              jsx("span", { style: css.metaKey, children: t("dmsLine") }),
+              jsx("span", { children: formatScope("dm", summary.dm, t) }),
             ],
           }),
-          err ? jsx("div", { style: { color: "tomato", fontSize: "0.85rem" }, children: err }) : null,
+          jsxs("div", {
+            style: css.row,
+            children: [
+              jsx("button", {
+                type: "button",
+                style: css.btnSm,
+                onClick: onEdit,
+                children: t("edit"),
+              }),
+              configured
+                ? jsx("button", {
+                    type: "button",
+                    style: css.btnSm,
+                    onClick: onRemoveToken,
+                    children: t("removeToken"),
+                  })
+                : null,
+              jsx("button", {
+                type: "button",
+                style: css.btnSm,
+                onClick: onDelete,
+                children: t("delete"),
+              }),
+            ],
+          }),
+          jsxs("div", {
+            style: { display: "flex", flexDirection: "column", gap: "0.2rem" },
+            children: [
+              jsx(Check, {
+                id: "delete-secret-" + item.account_id,
+                checked: Boolean(deleteSecret[item.account_id]),
+                onChange: (ev) =>
+                  setDeleteSecret((prev) => ({
+                    ...prev,
+                    [item.account_id]: ev.target.checked,
+                  })),
+                label: t("deleteSecretToo"),
+              }),
+              jsx("p", { style: css.hint, children: t("deleteSecretHint") }),
+            ],
+          }),
         ],
       });
     }
@@ -431,9 +929,9 @@ window.__ModuleLoader__.load({
       const [meta, setMeta] = useState({ intents: [] });
       const [err, setErr] = useState("");
       const [loading, setLoading] = useState(true);
-      const [mode, setMode] = useState("list"); // list | add | edit
+      const [mode, setMode] = useState("list");
       const [editing, setEditing] = useState(null);
-      const [deleteSecret, setDeleteSecret] = useState(false);
+      const [deleteSecret, setDeleteSecret] = useState({});
 
       const refresh = useCallback(async () => {
         setErr("");
@@ -467,9 +965,13 @@ window.__ModuleLoader__.load({
       async function onDelete(account) {
         if (!confirm(t("confirmDelete"))) return;
         try {
-          const q = deleteSecret ? "?deleteSecret=true" : "";
+          const q = deleteSecret[account.account_id] ? "?deleteSecret=true" : "";
           await api("/accounts/" + encodeURIComponent(account.account_id) + q, { method: "DELETE" });
-          setDeleteSecret(false);
+          setDeleteSecret((prev) => {
+            const next = { ...prev };
+            delete next[account.account_id];
+            return next;
+          });
           await refresh();
         } catch (e) {
           setErr((e && e.message) || t("error"));
@@ -495,125 +997,46 @@ window.__ModuleLoader__.load({
 
       return jsxs("div", {
         className: "dsh-piblox-discord-settings",
-        style: { display: "flex", flexDirection: "column", gap: "1.25rem", maxWidth: "48rem" },
+        style: css.page,
         children: [
           jsxs("div", {
             children: [
-              jsx("h2", {
-                style: { margin: 0, fontSize: "1.25rem", letterSpacing: "-0.02em" },
-                children: t("title"),
-              }),
-              jsx("p", {
-                style: { opacity: 0.72, margin: "0.25rem 0 0", fontSize: "0.9rem", lineHeight: 1.4 },
-                children: t("subtitle"),
-              }),
+              jsx("h2", { style: css.title, children: t("title") }),
+              jsx("p", { style: css.subtitle, children: t("subtitle") }),
             ],
           }),
           jsx("button", {
             type: "button",
+            style: css.btnPrimary,
             onClick: () => setMode("add"),
-            style: { alignSelf: "flex-start" },
             children: t("add"),
           }),
           loading
-            ? jsx("div", { style: { opacity: 0.65 }, children: t("loading") })
+            ? jsx("div", { style: css.hint, children: t("loading") })
             : items.length === 0
-              ? jsx("div", { style: { opacity: 0.65 }, children: t("empty") })
+              ? jsx("div", { style: css.hint, children: t("empty") })
               : jsx("div", {
-                  style: { display: "flex", flexDirection: "column", gap: "0.65rem" },
+                  style: { display: "flex", flexDirection: "column", gap: "0.75rem" },
                   children: items.map((item) =>
-                    jsxs(
-                      "div",
+                    jsx(
+                      AccountCard,
                       {
-                        style: {
-                          padding: "0.75rem",
-                          borderRadius: "0.5rem",
-                          background: "color-mix(in oklab, Canvas 92%, CanvasText 8%)",
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: "0.35rem",
+                        item: item,
+                        t: t,
+                        deleteSecret: deleteSecret,
+                        setDeleteSecret: setDeleteSecret,
+                        onEdit: () => {
+                          setEditing(item);
+                          setMode("edit");
                         },
-                        children: [
-                          jsxs("div", {
-                            style: { display: "flex", justifyContent: "space-between", gap: "0.5rem", flexWrap: "wrap" },
-                            children: [
-                              jsxs("div", {
-                                children: [
-                                  jsx("strong", { children: item.label || item.account_id }),
-                                  jsx("div", {
-                                    style: { fontSize: "0.75rem", opacity: 0.7 },
-                                    children: item.account_id,
-                                  }),
-                                ],
-                              }),
-                              jsx("code", {
-                                style: { fontSize: "0.75rem" },
-                                children: item.status,
-                              }),
-                            ],
-                          }),
-                          jsx("div", {
-                            style: { fontSize: "0.8rem", opacity: 0.8 },
-                            children:
-                              t("token") +
-                              ": " +
-                              (item.credentials && item.credentials.configured
-                                ? t("tokenConfigured")
-                                : t("tokenMissing")),
-                          }),
-                          jsx("div", {
-                            style: { fontSize: "0.75rem", opacity: 0.7 },
-                            children:
-                              "guilds=" +
-                              (item.scope_summary && item.scope_summary.guilds) +
-                              " channels=" +
-                              (item.scope_summary && item.scope_summary.channels) +
-                              " dm=" +
-                              (item.scope_summary && item.scope_summary.dm),
-                          }),
-                          jsxs("div", {
-                            style: { display: "flex", gap: "0.4rem", flexWrap: "wrap", alignItems: "center" },
-                            children: [
-                              jsx("button", {
-                                type: "button",
-                                onClick: () => {
-                                  setEditing(item);
-                                  setMode("edit");
-                                },
-                                children: t("edit"),
-                              }),
-                              item.credentials && item.credentials.configured
-                                ? jsx("button", {
-                                    type: "button",
-                                    onClick: () => void onRemoveToken(item),
-                                    children: t("removeToken"),
-                                  })
-                                : null,
-                              jsxs("label", {
-                                style: { display: "flex", gap: "0.3rem", alignItems: "center", fontSize: "0.75rem" },
-                                children: [
-                                  jsx("input", {
-                                    type: "checkbox",
-                                    checked: deleteSecret,
-                                    onChange: (ev) => setDeleteSecret(ev.target.checked),
-                                  }),
-                                  t("deleteSecretToo"),
-                                ],
-                              }),
-                              jsx("button", {
-                                type: "button",
-                                onClick: () => void onDelete(item),
-                                children: t("delete"),
-                              }),
-                            ],
-                          }),
-                        ],
+                        onDelete: () => void onDelete(item),
+                        onRemoveToken: () => void onRemoveToken(item),
                       },
                       item.account_id,
                     ),
                   ),
                 }),
-          err ? jsx("div", { style: { color: "tomato", fontSize: "0.85rem" }, children: err }) : null,
+          err ? jsx("p", { role: "alert", style: css.error, children: err }) : null,
         ],
       });
     }
@@ -647,6 +1070,9 @@ window.__ModuleLoader__.load({
     exports.apply = apply;
     exports.inject = ["slots", "locale", "settingsScope"];
     exports.DiscordSection = DiscordSection;
+    exports.partitionIntents = partitionIntents;
+    exports.formatScope = formatScope;
+    exports.COMMON_INTENT_IDS = COMMON_INTENT_IDS;
     return module.exports;
   },
 });

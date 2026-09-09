@@ -390,7 +390,6 @@ describe('client module registration shape', () => {
     assert.match(src, /SECTION_ID = "discord"/)
     assert.match(src, /tokenConfigured/)
     assert.equal(src.includes(CANARY), false)
-    // Write-only UX: never shows retrieved token value after save
     assert.doesNotMatch(src, /credentials\.value|token\.slice|last four/i)
   })
 })
