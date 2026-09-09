@@ -1,0 +1,8 @@
+# Optional Cordis patch fragment — not activated on any profile by this spike.
+# Operator must authorize profile wiring separately.
+- insert:
+    - id: dsh-piblox-discord
+      name: 'dsh-piblox-discord'
+      config:
+        transport: fake
+        accounts: {}

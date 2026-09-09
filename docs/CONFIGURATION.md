@@ -39,10 +39,13 @@ discord:
       allowed_guilds:
         - "123456789012345678"
       allowed_channels: []               # LOCKED: empty = deny all channels
+      allow_all_guilds: false            # explicit opt-in for unrestricted guilds
+      allow_all_channels: false          # explicit opt-in for unrestricted channels
       denied_channels: []
       dm:
         enabled: true
         allowed_users: []                # LOCKED: empty = deny all DM users
+        allow_all_users: false           # explicit opt-in
       bindings:
         - kind: dm
           # uses ConversationBinding keys — see DSH-INTEGRATION.md
@@ -83,8 +86,11 @@ discord:
 | `enabled` | yes | Soft disable without deleting config |
 | `intents` | yes | Least privilege per account |
 | `allowed_guilds` | yes | **LOCKED:** `[]` = deny all guilds |
-| `allowed_channels` / `denied_channels` | no | **LOCKED:** `allowed_channels: []` = deny all channels; `denied_channels` still deny listed IDs |
+| `allow_all_guilds` | no | **LOCKED:** explicit opt-in unrestricted guilds |
+| `allowed_channels` / `denied_channels` | no | **LOCKED:** `allowed_channels: []` = deny all; `denied_channels` still deny listed IDs |
+| `allow_all_channels` | no | **LOCKED:** explicit opt-in unrestricted channels |
 | `dm.enabled` / `allowed_users` | no | **LOCKED:** `allowed_users: []` = deny all DM users (even if `dm.enabled: true`) |
+| `dm.allow_all_users` | no | **LOCKED:** explicit opt-in unrestricted DM users |
 | `bindings` | yes | Which conversation kinds create bindings |
 | `inbound.*` | no | Mention gates, bot ignore |
 | `proactive_targets` | no | Named aliases for notifications |

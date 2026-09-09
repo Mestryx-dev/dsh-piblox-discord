@@ -1,11 +1,19 @@
 # dsh-piblox-discord
 
-**STATUS: DESIGN / NOT IMPLEMENTED**
+**STATUS: V1 SPIKE IMPLEMENTED (FakeTransport) / NOT PRODUCTION-ACTIVATED**
 
 First-party Cordis / DeepSeek Harness (DSH) **generic Discord provider**.
 
-This repository currently contains architecture and feature contracts only.
-There is no `src/`, no Discord client dependency, and no runnable bot.
+V1 spike proves FakeTransport → ConversationBinding → DSH agents followup →
+outbound without live Discord. Live Gateway/profile activation remains blocked
+until operator authorization.
+
+```bash
+npm test
+npm run smoke
+```
+
+Pinned client: **`discord.js@14.27.0`** (skeleton only — no live connect).
 
 ## What
 

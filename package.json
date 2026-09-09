@@ -1,0 +1,54 @@
+{
+  "name": "dsh-piblox-discord",
+  "version": "0.1.0-dev",
+  "description": "Generic first-party Discord provider for DeepSeek Harness (DSH)",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "docs",
+    "DESIGN-STATUS.md"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "discord",
+    "cordis"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "smoke": "node test/smoke.js"
+  },
+  "dependencies": {
+    "discord.js": "14.27.0"
+  },
+  "peerDependencies": {
+    "dsh-conversation-binding": "*",
+    "dsh-observability": "*"
+  },
+  "peerDependenciesMeta": {
+    "dsh-conversation-binding": {
+      "optional": true
+    },
+    "dsh-observability": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

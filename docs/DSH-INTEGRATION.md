@@ -51,7 +51,7 @@ dump()
 - **No `:` allowed** in any field
 - Core treats fields as **opaque**
 
-### Discord key proposals (PROPOSED)
+### Discord key encoding (LOCKED — ADR-0010)
 
 | Conversation kind | `provider` | `scope` | `external_id` |
 |---|---|---|---|
