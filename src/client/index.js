@@ -405,7 +405,10 @@ window.__ModuleLoader__.load({
         dmsLine: "DMs",
         loading: "Loading…",
         error: "Something went wrong",
-        snowflakeHint: "One Discord snowflake per line (decimal string)",
+        snowflakeHint:
+          "One ID per line: 17–20 digit snowflake (Developer Mode → Copy ID). Channel/guild URLs OK.",
+        snowflakeInvalid:
+          "Invalid Discord ID. Use 17–20 digit snowflakes only (no names, no short numbers).",
         scopeAllowAll: "allow all",
         scopeDenyAll: "deny all",
         scopeDisabled: "disabled",
@@ -438,6 +441,34 @@ window.__ModuleLoader__.load({
         .split(/[\n,\s]+/)
         .map((s) => s.trim())
         .filter(Boolean);
+    }
+
+    /** Extract / validate Discord snowflake decimal strings (17–20 digits). */
+    function coerceSnowflake(raw) {
+      const s = String(raw || "").trim().replace(/^["']|["']$/g, "");
+      if (/^\d{17,20}$/.test(s)) return s;
+      // discord.com/channels/<guild>/<channel>[/...]
+      const m = s.match(/channels\/(\d{17,20})(?:\/(\d{17,20}))?/);
+      if (m) return m[2] || m[1];
+      return null;
+    }
+
+    function linesToSnowflakes(text) {
+      const out = [];
+      for (const part of linesToList(text)) {
+        const id = coerceSnowflake(part);
+        if (!id) {
+          const err = new Error(
+            "Invalid Discord ID \"" +
+              part.slice(0, 48) +
+              "\". Use 17–20 digit snowflakes (Developer Mode → Copy ID).",
+          );
+          err.code = "snowflake";
+          throw err;
+        }
+        if (!out.includes(id)) out.push(id);
+      }
+      return out;
     }
 
     function listToLines(list) {
@@ -635,20 +666,24 @@ window.__ModuleLoader__.load({
             intents: [...intents],
             allowAllGuilds,
             allowAllChannels,
-            allowedGuilds: allowAllGuilds ? [] : linesToList(guilds),
-            allowedChannels: allowAllChannels ? [] : linesToList(channels),
+            allowedGuilds: allowAllGuilds ? [] : linesToSnowflakes(guilds),
+            allowedChannels: allowAllChannels ? [] : linesToSnowflakes(channels),
             dm: {
               enabled: dmEnabled,
               allowAllUsers: dmEnabled ? allowAllUsers : false,
-              allowedUsers: !dmEnabled || allowAllUsers ? [] : linesToList(dmUsers),
+              allowedUsers: !dmEnabled || allowAllUsers ? [] : linesToSnowflakes(dmUsers),
             },
             ignoreBots,
           };
           if (isNew) {
+            const id = accountId.trim();
+            if (!/^[a-z][a-z0-9_]{0,47}$/.test(id)) {
+              throw new Error(t("accountIdHint"));
+            }
             await api("/accounts", {
               method: "POST",
               body: JSON.stringify({
-                account_id: accountId.trim(),
+                account_id: id,
                 token: token || undefined,
                 ...body,
               }),
