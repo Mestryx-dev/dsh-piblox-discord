@@ -11,7 +11,7 @@ import { createDeterministicAgents } from './helpers/deterministic-agents.js'
 import { COMPONENT_KINDS } from '../src/types.js'
 import { createDiscordUserMessage } from '../src/message-source.js'
 
-function setup(accounts) {
+function setup(accounts, extra = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-discord-bridge-'))
   const conversationBinding = createConversationBindingForTest({
     storePath: join(dir, 'bindings.json'),
@@ -32,12 +32,19 @@ function setup(accounts) {
       agents,
       transport,
       observability,
+      clock: extra.clock,
       onSessionEvent: (sessionId, listener) =>
         agents.onEvent((sid, event) => {
-          if (String(sid) === String(sessionId)) listener({ id: sid }, event)
+          if (String(sid) === String(sessionId)) return listener({ id: sid }, event)
         }),
     },
-    { accounts },
+    {
+      accounts,
+      outboxPath: join(dir, 'outbox.json'),
+      inboundDedupePath: join(dir, 'inbound-dedupe.json'),
+      inboundDedupeTtlMs: extra.inboundDedupeTtlMs,
+      inboundDedupeLeaseMs: extra.inboundDedupeLeaseMs,
+    },
   )
   return { dir, conversationBinding, agents, transport, provider, emitted }
 }
@@ -125,12 +132,12 @@ describe('DSH bridge', () => {
       messageId: 'm1',
       content: 'reply exactly: DSH_DISCORD_SMOKE_OK',
     })
-    // allow microtask delivery
-    await new Promise((r) => setTimeout(r, 10))
     assert.ok(ctx.transport.outbound.length >= 1)
     const last = ctx.transport.outbound[ctx.transport.outbound.length - 1]
     assert.match(last.payload.content, /DSH_DISCORD_SMOKE_OK/)
     assert.ok(ctx.emitted.some((e) => e.type === 'request.received'))
+    const ops = ctx.provider.outbox.listOperations({ accountId: 'account_alpha' })
+    assert.ok(ops.some((o) => o.state === 'delivered'))
   })
 
   it('reuses live session on repeated events', async () => {
@@ -142,7 +149,6 @@ describe('DSH bridge', () => {
       messageId: 'm1',
       content: 'reply exactly: ONE',
     })
-    await new Promise((r) => setTimeout(r, 10))
     const bindings = ctx.conversationBinding.dump().bindings
     const sessions = new Set(Object.values(bindings).map((b) => b.session_id))
     assert.equal(sessions.size, 1)
@@ -156,7 +162,6 @@ describe('DSH bridge', () => {
       messageId: 'm2',
       content: 'reply exactly: TWO',
     })
-    await new Promise((r) => setTimeout(r, 10))
     const sessions2 = new Set(
       Object.values(ctx.conversationBinding.dump().bindings).map((b) => b.session_id),
     )
@@ -173,7 +178,6 @@ describe('DSH bridge', () => {
       messageId: 'm1',
       content: 'reply exactly: BEFORE',
     })
-    await new Promise((r) => setTimeout(r, 10))
     const identity = {
       provider: 'discord',
       scope: 'account_alpha.channel',
@@ -191,7 +195,6 @@ describe('DSH bridge', () => {
       messageId: 'm2',
       content: 'reply exactly: AFTER_RECOVERY',
     })
-    await new Promise((r) => setTimeout(r, 10))
     const after = ctx.conversationBinding.resolve(identity)
     assert.ok(after)
     assert.notEqual(after.session_id, before.session_id)
@@ -260,7 +263,6 @@ describe('DSH bridge', () => {
       messageId: 'm1',
       content: 'reply exactly: ALPHA',
     })
-    await new Promise((r) => setTimeout(r, 10))
     assert.ok(ctx.transport.outbound.every((o) => o.accountId === 'account_alpha'))
   })
 })

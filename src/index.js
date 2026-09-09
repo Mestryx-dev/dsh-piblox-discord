@@ -3,6 +3,8 @@
  *
  * Cordis service key: `discord` (plugin-owned API surface).
  * Transport: FakeTransport (spike) | DiscordJsTransport skeleton (no live connect).
+ *
+ * ALL_NORMAL_OUTBOUND_VIA_OUTBOX = LOCKED
  */
 
 import { normalizePluginConfig } from './config.js'
@@ -11,6 +13,9 @@ import { DiscordJsTransport } from './transport/discordjs.js'
 import { DiscordSessionBridge } from './bridge.js'
 import { createDeliveryOutbox } from './outbox/index.js'
 import { FakeClock, SystemClock } from './clock.js'
+import { createInboundDedupe, defaultInboundDedupePath } from './inbound-dedupe.js'
+import { createOutboundApi } from './outbound-api.js'
+import { defaultOutboxPath } from './outbox/store.js'
 
 export const name = 'dsh-piblox-discord'
 /** Agents + conversationBinding required for the DSH bridge. */
@@ -34,11 +39,19 @@ export { createOutboxStore, defaultOutboxPath } from './outbox/store.js'
 export { toReceipt } from './outbox/types.js'
 export { FakeClock, SystemClock } from './clock.js'
 export { classifyTransportError, computeBackoffMs, nonceFromOperationId } from './errors.js'
+export { createInboundDedupe, defaultInboundDedupePath, inboundEventKey } from './inbound-dedupe.js'
+export { createOutboundApi } from './outbound-api.js'
+export { mapDiscordJsError, toClassifiableError } from './discord-errors.js'
 
 /**
  * Build plugin runtime without Cordis (tests / embedding).
  * @param {object} deps
- * @param {import('./config.js').PluginConfig & { outboxPath?: string }} [config]
+ * @param {import('./config.js').PluginConfig & {
+ *   outboxPath?: string,
+ *   inboundDedupePath?: string,
+ *   inboundDedupeTtlMs?: number,
+ *   inboundDedupeLeaseMs?: number,
+ * }} [config]
  */
 export function createDiscordProvider(deps, config = {}) {
   const cfg = normalizePluginConfig(config)
@@ -47,26 +60,47 @@ export function createDiscordProvider(deps, config = {}) {
     (cfg.transport === 'discordjs' ? new DiscordJsTransport({ allowConnect: false }) : new FakeTransport())
 
   const clock = deps.clock || new SystemClock()
+  const outboxPath = config.outboxPath || deps.outboxPath || defaultOutboxPath()
   const outbox =
-    deps.outbox ||
-    (deps.outbox === null
+    deps.outbox === null
       ? null
-      : createDeliveryOutbox({
+      : deps.outbox ||
+        createDeliveryOutbox({
           transport,
-          storePath: config.outboxPath || deps.outboxPath,
+          storePath: outboxPath,
           clock,
           observability: deps.observability,
           retry: deps.retry,
-        }))
+        })
+
+  const inboundDedupe =
+    deps.inboundDedupe === null
+      ? null
+      : deps.inboundDedupe ||
+        createInboundDedupe({
+          storePath: config.inboundDedupePath || deps.inboundDedupePath || defaultInboundDedupePath(),
+          clock,
+          ttlMs: config.inboundDedupeTtlMs ?? deps.inboundDedupeTtlMs ?? 72 * 60 * 60 * 1000,
+          leaseMs: config.inboundDedupeLeaseMs ?? deps.inboundDedupeLeaseMs ?? 5 * 60 * 1000,
+        })
+
+  if (!outbox) {
+    throw new Error('createDiscordProvider: DeliveryOutbox is required for normal outbound paths')
+  }
+
+  const messages = createOutboundApi({ outbox })
 
   const bridge = new DiscordSessionBridge({
     conversationBinding: deps.conversationBinding,
     agents: deps.agents,
     transport,
+    outbox,
+    inboundDedupe,
     accounts: cfg.accounts,
     observability: deps.observability,
     createUserMessage: deps.createUserMessage,
     onSessionEvent: deps.onSessionEvent,
+    onInteractionIntent: deps.onInteractionIntent,
     logger: deps.logger,
   })
 
@@ -76,6 +110,23 @@ export function createDiscordProvider(deps, config = {}) {
     bridge,
     outbox,
     clock,
+    inboundDedupe,
+    /** Future tools: discord.message.send|reply|edit */
+    messages,
+    /**
+     * Drain due outbox ops (tests / controlled flush).
+     * @param {{ maxRounds?: number, accountId?: string }} [opts]
+     */
+    async drainOutbound(opts = {}) {
+      const maxRounds = opts.maxRounds ?? 30
+      let total = 0
+      for (let i = 0; i < maxRounds; i++) {
+        const { processed } = await outbox.tick({ accountId: opts.accountId })
+        total += processed
+        if (processed === 0) break
+      }
+      return { processed: total }
+    },
     async start() {
       if (outbox?.recoverOnLoad) {
         await outbox.recoverOnLoad()

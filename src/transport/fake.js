@@ -112,6 +112,45 @@ export class FakeTransport {
   }
 
   /**
+   * Simulate Gateway reconnect replay of the same MESSAGE_CREATE (same message_id).
+   * @param {Omit<PlatformEvent, 'type'> & { type?: 'discord.message.created' }} partial
+   */
+  async replayMessage(partial) {
+    return this.injectMessage(partial)
+  }
+
+  /**
+   * Inject a button/component interaction (intent only — not authorization).
+   * @param {{
+   *   accountId: string,
+   *   interactionId: string,
+   *   channelId?: string,
+   *   guildId?: string,
+   *   userId?: string,
+   *   customId?: string,
+   * }} partial
+   */
+  async injectInteraction(partial) {
+    const event = {
+      type: 'discord.interaction',
+      eventId: partial.interactionId || `ix_${++this._seq}`,
+      interactionId: partial.interactionId || `ix_${this._seq}`,
+      accountId: partial.accountId,
+      channelId: partial.channelId,
+      guildId: partial.guildId,
+      userId: partial.userId,
+      customId: partial.customId,
+    }
+    if (!this.running.has(event.accountId)) {
+      throw new TransportError('permission', `account not running: ${event.accountId}`)
+    }
+    for (const handler of [...this.handlers]) {
+      await handler(event)
+    }
+    return event
+  }
+
+  /**
    * @param {string} accountId
    * @returns {SimulatedFailureSpec | null}
    */

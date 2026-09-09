@@ -28,7 +28,7 @@ describe('plugin lifecycle', () => {
       const agents = createDeterministicAgents()
       const provider = createDiscordProvider(
         { conversationBinding, agents, transport: new FakeTransport() },
-        { transport: 'fake', accounts: {} },
+        { transport: 'fake', accounts: {}, outboxPath: join(dir, 'outbox.json'), inboundDedupePath: join(dir, 'dedupe.json') },
       )
       await provider.start()
       assert.equal(Object.keys(provider.config.accounts).length, 0)
@@ -61,6 +61,8 @@ describe('plugin lifecycle', () => {
               allowAllChannels: true,
             },
           },
+          outboxPath: join(dir, 'outbox.json'),
+          inboundDedupePath: join(dir, 'dedupe.json'),
         },
       )
       await provider.start()

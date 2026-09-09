@@ -1,13 +1,14 @@
 # dsh-piblox-discord
 
-**STATUS: V1 SPIKE + RELIABILITY LAYER (FakeTransport) / NOT PRODUCTION-ACTIVATED**
+**STATUS: V1 TRANSPORT CLOSURE PASS (FakeTransport) / LIVE_DISCORD_READY=YES (dev-bot only, not prod)**
 
 First-party Cordis / DeepSeek Harness (DSH) **generic Discord provider**.
 
 Proven without live Discord:
 
-- FakeTransport → ConversationBinding → DSH agents followup → outbound
+- inbound → authorize → dedupe → ConversationBinding → agents → **DeliveryOutbox** → FakeTransport
 - Durable outbox with 429/Retry-After, crash recovery, multi-step groups
+- Inbound message/interaction dedupe with TTL + lease reclaim
 
 ```bash
 npm test
@@ -15,7 +16,8 @@ npm run smoke
 ```
 
 Pinned client: **`discord.js@14.27.0`** (skeleton only — no live connect).  
-Outbox ledger (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-outbox.json`
+Outbox ledger (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-outbox.json`  
+Inbound dedupe (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-inbound-dedupe.json`
 
 ## What
 

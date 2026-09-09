@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import { createOutboxStore, defaultOutboxPath } from './store.js'
 import { toReceipt } from './types.js'
 import { classifyTransportError, computeBackoffMs, nonceFromOperationId } from '../errors.js'
+import { toClassifiableError } from '../discord-errors.js'
 import { SystemClock } from '../clock.js'
 
 /**
@@ -400,45 +401,50 @@ export function createDeliveryOutbox(options) {
 
   /** @param {OutboxOperation} op */
   async function dispatchToTransport(op) {
-    const payload = {
-      content: op.payload.content,
-      components: op.payload.components,
-      replyTo: op.payload.replyTo || op.target.messageId,
-      nonce: op.nonce || undefined,
-      enforceNonce: op.enforce_nonce || undefined,
-      raw: op.payload.raw,
-    }
+    try {
+      const payload = {
+        content: op.payload.content,
+        components: op.payload.components,
+        replyTo: op.payload.replyTo || op.target.messageId,
+        nonce: op.nonce || undefined,
+        enforceNonce: op.enforce_nonce || undefined,
+        raw: op.payload.raw,
+      }
 
-    switch (op.operation_type) {
-      case 'sendMessage':
-        return transport.sendMessage(op.account_id, op.target.channelId, payload)
-      case 'replyMessage':
-        return transport.replyMessage(
-          op.account_id,
-          op.target.channelId,
-          op.target.messageId || op.payload.replyTo,
-          payload,
-        )
-      case 'editMessage':
-        return transport.editMessage(op.account_id, op.target.channelId, op.target.messageId, payload)
-      case 'createThread': {
-        if (typeof transport.createThread !== 'function') {
-          // FakeTransport implements createThread; live skeleton may not yet.
-          throw Object.assign(new Error('createThread not supported by transport'), {
+      switch (op.operation_type) {
+        case 'sendMessage':
+          return await transport.sendMessage(op.account_id, op.target.channelId, payload)
+        case 'replyMessage':
+          return await transport.replyMessage(
+            op.account_id,
+            op.target.channelId,
+            op.target.messageId || op.payload.replyTo,
+            payload,
+          )
+        case 'editMessage':
+          return await transport.editMessage(op.account_id, op.target.channelId, op.target.messageId, payload)
+        case 'createThread': {
+          if (typeof transport.createThread !== 'function') {
+            // FakeTransport implements createThread; live skeleton may not yet.
+            throw Object.assign(new Error('createThread not supported by transport'), {
+              code: 'invalid_payload',
+            })
+          }
+          return await transport.createThread(op.account_id, op.target.parentChannelId || op.target.channelId, {
+            name: op.payload.threadName || 'thread',
+            messageId: op.target.messageId,
+          })
+        }
+        default: {
+          const _exhaustive = op.operation_type
+          throw Object.assign(new Error(`unknown operation_type: ${_exhaustive}`), {
             code: 'invalid_payload',
           })
         }
-        return transport.createThread(op.account_id, op.target.parentChannelId || op.target.channelId, {
-          name: op.payload.threadName || 'thread',
-          messageId: op.target.messageId,
-        })
       }
-      default: {
-        const _exhaustive = op.operation_type
-        throw Object.assign(new Error(`unknown operation_type: ${_exhaustive}`), {
-          code: 'invalid_payload',
-        })
-      }
+    } catch (err) {
+      // Normalize discord.js shapes into TransportError taxonomy for classifyTransportError.
+      throw toClassifiableError(err)
     }
   }
 

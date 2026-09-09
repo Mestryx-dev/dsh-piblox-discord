@@ -1,6 +1,8 @@
 # State & reliability — dsh-piblox-discord
 
 **STATUS:** IMPLEMENTED + TESTED (FakeTransport) / DESIGNED_FOR_LIVE (discord.js REST headers)  
+**TRANSPORT_CLOSURE:** **PASS** (2026-09-09)  
+**ALL_NORMAL_OUTBOUND_VIA_OUTBOX:** **LOCKED**  
 **NOT_LIVE_TESTED:** real Discord rate-limit buckets / Gateway
 
 State ownership mixes **OBSERVED** Core owners and **IMPLEMENTED** plugin transport state.
@@ -13,11 +15,12 @@ State ownership mixes **OBSERVED** Core owners and **IMPLEMENTED** plugin transp
 | Bot token values | `dsh-piblox-secrets` (`secrets`) | yes | OBSERVED credential SSOT |
 | Conversation ↔ session binding | `conversationBinding` | yes | OBSERVED — **no parallel store** |
 | Discord channel/thread/message IDs | Discord + outbox `discord_resource_id` | ephemeral + refs | Platform truth is Discord |
+| Stream delivery (session → Discord message_id) | Bridge `streams` map | memory | Transport/render only — **not** a second ConversationBinding |
 | Outbound delivery jobs | Plugin outbox (`discord-outbox.json`) | **yes (IMPLEMENTED)** | Survive crash mid-send |
 | Create Message `nonce` map | Outbox op + FakeTransport nonce index | yes | Discord-native idempotency (`enforce_nonce`) |
 | Durable operation IDs | Outbox `operation_id` | yes | Dedupe + receipts |
 | Multi-step delivery groups | Outbox `groups` | yes | Atlas partial-thread prevention |
-| Inbound event dedupe window | Plugin dedupe store | PROPOSED | Prevent double session prompts |
+| Inbound event dedupe window | Plugin `discord-inbound-dedupe.json` | **yes (IMPLEMENTED)** | Prevent double DSH followup |
 | Rate-limit bucket state | Live REST layer | DESIGNED_FOR_LIVE | Short-lived; outbox honors Retry-After today |
 | Retry state | Outbox | yes | Tied to delivery jobs |
 | Delivery receipts | Outbox → `toReceipt()` | yes | Consumer confirmation |
@@ -70,7 +73,54 @@ persist group + all steps before step 1
 
 Atlas failure mode covered by `test/reliability.test.js` group case.
 
-## 3. Failure semantics (IMPLEMENTED classification)
+### Application outbound path (LOCKED)
+
+```text
+assistant/chunk → buffer only (coalesce)
+assistant/message | turn/end | flushOutbound → outbox.enqueue
+outbox.tick → transport.send|reply|edit
+```
+
+Proactive/tool surface: `provider.messages.sendMessage|replyMessage|editMessage` → same outbox.
+
+**Not allowed:** bridge / messages API → transport directly.
+
+## 3. Inbound dedupe (IMPLEMENTED + LOCKED)
+
+Default TTL: **72h** (aligned with `CONFIGURATION.md` `inbound.dedupe_ttl_hours: 72`).  
+Default lease: **5 minutes** for in-flight `claimed` / `dispatched`.
+
+| Field | Purpose |
+|---|---|
+| `account_id` + `event_id` | Primary key |
+| `event_type` | `discord.message.created` / `discord.interaction` / … |
+| `state` | `claimed` → `dispatched` → `completed` |
+| `first_seen_at` / `expires_at` | TTL window |
+| `lease_until` | Crash reclaim |
+
+**Keys:** messages → `account_id + message_id`; interactions → `account_id + interaction_id`.  
+Content hash is **not** primary identity.
+
+### Ordering (LOCKED)
+
+```text
+normalize → authorize → dedupe claim → binding/session → agent.followup → complete
+```
+
+Authorize precedes claim so denied events are not stored.
+
+### Crash semantics (LOCKED)
+
+| Situation | Behaviour |
+|---|---|
+| `completed` within TTL | duplicate → **no** second followup |
+| `claimed` / `dispatched` with live lease | duplicate (in-flight) |
+| `claimed` with **expired lease** | **reclaim** (at-least-once ingestion) |
+| After TTL expiry | new claim allowed (documented; Discord snowflakes remain unique in practice) |
+
+Invariant: **duplicate Discord delivery ≠ duplicate DSH turn** while the claim is live.
+
+## 4. Failure semantics (IMPLEMENTED classification)
 
 | Failure | Class | Behaviour |
 |---|---|---|
@@ -82,6 +132,11 @@ Atlas failure mode covered by `test/reliability.test.js` group case.
 | Unknown target / invalid payload | discord_domain | terminal |
 | Policy DENY | policy | not a transport retry (outbox must not re-authorize) |
 
+### discord.js error mapping (IMPLEMENTED + TESTED)
+
+`mapDiscordJsError` (discord.js@14.27.0 shapes) → `TransportError` codes used by `classifyTransportError`.  
+Outbox `dispatchToTransport` wraps throws via `toClassifiableError`.
+
 ### Class distinctions (LOCKED vocabulary)
 
 ```text
@@ -91,22 +146,26 @@ dsh_failure
 policy_denial
 ```
 
-## 4. Scheduler / clock
+**LOCKED:** `transport failure ≠ DSH/domain failure` — ConversationBinding and session state are not corrupted by Discord 429 / terminal delivery failure.
+
+## 5. Scheduler / clock
 
 - `FakeClock.now()` / `advance(ms)` — tests (no real sleeps)
 - `SystemClock` — production
 - Per-account processing: alpha 429 does not block beta
 
-## 5. FakeTransport (IMPLEMENTED)
+## 6. FakeTransport (IMPLEMENTED)
 
 - Records REST-like calls
 - Injects 429 (with Retry-After), 5xx, timeout, permission, auth, network
 - Ambiguous timeout via `applyDespiteFailure`
 - Nonce / `enforce_nonce` index
 - `createThread` for multi-step groups
+- `injectMessage` / `replayMessage` / `injectInteraction` for Gateway replay tests
 - No network, no tokens
 
-## 6. Observability
+## 7. Observability
 
-Uses existing closed Core event types only (`tool.called` / `tool.returned` / `tool.failed`)
-with operation metadata. Does **not** extend EVENT_TYPES with `discord.*`.
+Uses existing closed Core event types only (`tool.called` / `tool.returned` / `tool.failed`, optional `request.received`)
+with `correlation_id` / `session_id` / `operation_id` / `account_id` metadata.  
+Does **not** extend EVENT_TYPES with `discord.*`.

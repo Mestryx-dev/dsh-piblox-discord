@@ -36,9 +36,19 @@ export function createDeterministicAgents(options = {}) {
 
   function emit(sessionId, event) {
     for (const fn of bus) fn(sessionId, event)
+  }
+
+  /**
+   * @param {string} sessionId
+   * @param {any} event
+   */
+  async function emitAsync(sessionId, event) {
+    for (const fn of bus) {
+      await fn(sessionId, event)
+    }
     const handle = handles.get(String(sessionId))
     if (handle?.agent?.__onSessionEvent) {
-      void handle.agent.__onSessionEvent({ id: sessionId }, event)
+      await handle.agent.__onSessionEvent({ id: sessionId }, event)
     }
   }
 
@@ -63,19 +73,19 @@ export function createDeterministicAgents(options = {}) {
       const agent = {
         id,
         session: { id },
-        followup(message) {
+        async followup(message) {
           const text = extractUserText(message)
           const reply = options.replyFn ? options.replyFn(text) : deterministicReply(text)
-          // chunk then final message then turn/end
-          emit(id, {
+          // chunk then final message then turn/end — await so outbox flush completes before inbound returns
+          await emitAsync(id, {
             type: 'assistant/chunk',
             data: { chunk: { type: 'text-delta', text: reply } },
           })
-          emit(id, {
+          await emitAsync(id, {
             type: 'assistant/message',
             data: { message: { content: [{ type: 'text', text: reply }] } },
           })
-          emit(id, { type: 'turn/end', data: {} })
+          await emitAsync(id, { type: 'turn/end', data: {} })
         },
         __onSessionEvent: null,
         __emitSessionEvent: true,

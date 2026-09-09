@@ -65,8 +65,10 @@ export class DiscordJsTransport {
    */
   describeReliabilityContract() {
     return {
-      rateLimit: 'Map DiscordAPIError/RateLimitError status 429 + retryAfter → TransportError(429, {retryAfterMs})',
-      restErrors: '5xx → retryable; 401 → auth isolate account; 403/404 → terminal domain',
+      rateLimit:
+        'mapDiscordJsError(RateLimitError[/route]) → TransportError(429, {retryAfterMs}) via outbox dispatch',
+      restErrors:
+        'DiscordAPIError[code] 5xx→retryable; 401→auth isolate; 403/50013/50001→permission; 404/10003/10008→unknown_target',
       resourceIds: 'Returned message/channel/thread snowflakes become discord_resource_id',
       nonce: 'OutboundMessage.nonce + enforceNonce forwarded on Create Message',
       live: false,

@@ -1,6 +1,6 @@
 /**
  * Deterministic end-to-end smoke:
- * Fake Discord inbound → ConversationBinding → agents.create → followup → FakeTransport outbound
+ * Fake Discord inbound → dedupe → ConversationBinding → agents → outbox → FakeTransport
  */
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -25,7 +25,7 @@ const provider = createDiscordProvider(
     transport,
     onSessionEvent: (sessionId, listener) =>
       agents.onEvent((sid, event) => {
-        if (String(sid) === String(sessionId)) listener({ id: sid }, event)
+        if (String(sid) === String(sessionId)) return listener({ id: sid }, event)
       }),
   },
   {
@@ -36,6 +36,8 @@ const provider = createDiscordProvider(
         allowAllChannels: true,
       },
     },
+    outboxPath: join(dir, 'outbox.json'),
+    inboundDedupePath: join(dir, 'inbound-dedupe.json'),
   },
 )
 
@@ -50,10 +52,11 @@ await transport.injectMessage({
   content: 'reply exactly: DSH_DISCORD_SMOKE_OK',
 })
 
-await new Promise((r) => setTimeout(r, 20))
-
 const outbound = transport.outbound.filter((o) => o.payload?.content?.includes('DSH_DISCORD_SMOKE_OK'))
 assert.ok(outbound.length >= 1, 'expected FakeTransport outbound with smoke token')
+
+const delivered = provider.outbox.listOperations({ accountId: 'account_alpha', state: 'delivered' })
+assert.ok(delivered.length >= 1, 'expected delivered outbox receipt')
 
 const bindings = Object.values(conversationBinding.dump().bindings)
 assert.equal(bindings.length, 1)
@@ -67,6 +70,7 @@ console.log(
       input: 'reply exactly: DSH_DISCORD_SMOKE_OK',
       session_id: sessionId,
       output: outbound[outbound.length - 1].payload.content,
+      outbox_delivered: delivered.length,
     },
     null,
     2,

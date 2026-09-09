@@ -1,9 +1,11 @@
 # Architecture — dsh-piblox-discord
 
-**STATUS:** DESIGN / NOT IMPLEMENTED  
-**Labels:** LOCKED intents from mission; OBSERVED DSH seams; PROPOSED plugin internals.
+**STATUS:** V1 TRANSPORT PATH IMPLEMENTED (FakeTransport) / LIVE GATEWAY NOT ACTIVATED  
+**Labels:** LOCKED intents from mission; OBSERVED DSH seams; IMPLEMENTED plugin reliability path.
 
 **LOCKED:** Modern Discord API / Components V2 baseline (ADR-0007) — Discord HTTP **`v10`**, **`discord.js` 14.x** direction, Components V2 as first-class transport/render primitive.
+
+**LOCKED:** `ALL_NORMAL_OUTBOUND_VIA_OUTBOX` — bridge + `messages` API enqueue only; transport writes are outbox-worker / test-only.
 
 ## 1. Logical stack
 
@@ -139,35 +141,37 @@ and binding rules. There is **no** singleton `ONE_PLUGIN = ONE_BOT` assumption.
 Account ids are config labels. Those labels are **config aliases**, not Core
 business logic branches (`if vega` is forbidden in Core code).
 
-## 8. Inbound path (PROPOSED over OBSERVED seams)
+## 8. Inbound path (IMPLEMENTED + TESTED over OBSERVED seams)
 
 ```text
-Discord interaction/event (Gateway now; HTTP later)
+Discord interaction/event (FakeTransport inject today; Gateway later)
   → account_id attach
   → authorize (guild/channel/user allowlists; `[]` = deny all)  [plugin config LOCKED]
-  → inbound dedupe
+  → inbound dedupe claim (account_id + message_id | interaction_id)
   → normalize → DiscordNormalizedEvent | UnknownDiscordEvent
   → ConversationBinding.resolveOrCreate(...)     [OBSERVED]
   → mint/resume DSH session_id via ctx.agents.create|get|resume  [LOCKED — ADR-0008]
   → observability.mint/bind + emit request.received  [OBSERVED closed types]
   → consumer routing (agent.followup / session/event)  [LOCKED — ADR-0008]
-  → outbound replies via delivery queue (Components V2 capable)
+  → mark inbound completed
+  → assistant output → DeliveryOutbox → transport
 ```
+
+Ordering note: **authorize before claim** so denied traffic never enters the durable dedupe store.
 
 Consumers must not depend on whether the interaction arrived via Gateway or HTTP.
 
-## 9. Outbound path (PROPOSED)
+## 9. Outbound path (IMPLEMENTED + TESTED)
 
 ```text
-DSH consumer / tool / notification
-  → discord.message.send (legacy and/or Components V2 tree)
-  → policy tools/pre-execute gate (if tool call)   [OBSERVED]
-  → outbox accept → queued → sending
-  → Create Message with deterministic nonce + enforce_nonce when applicable
-  → REST v10 with rate-limit / Retry-After
-  → delivered | retry_wait | failed_terminal
-  → observability tool.returned / tool.failed
+assistant/chunk|message | DSH consumer / messages API
+  → coalesce stream buffer (no per-token enqueue)
+  → outbox.enqueue (sendMessage | replyMessage | editMessage)
+  → outbox.tick → DiscordTransport
+  → delivered | retry_wait | failed_terminal (receipt)
 ```
+
+**LOCKED:** transport failure ≠ DSH/domain failure. A 429 leaves the DSH turn successful and the delivery op in `retry_wait`.
 
 **Idempotency (LOCKED principle):**
 
