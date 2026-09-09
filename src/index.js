@@ -279,14 +279,18 @@ export function apply(ctx, config = {}) {
 
   const get = (key) => (typeof ctx.get === 'function' ? ctx.get(key) : undefined)
   const secrets = get('secrets') || undefined
+  // Soft-resolve optional services — never access ctx.observability as a property
+  // without inject (Cordis throws "cannot get property without inject").
+  const observability = get('observability')
+  const createUserMessage = get('createUserMessage')
 
   const provider = createDiscordProvider(
     {
       conversationBinding,
       agents,
       secrets,
-      observability: ctx.observability,
-      createUserMessage: ctx.createUserMessage,
+      observability,
+      createUserMessage,
       onSessionEvent: (sessionId, listener) => {
         return ctx.on('session/event', (session, event) => {
           const sid = String(session?.id ?? session?.sessionId ?? '')
