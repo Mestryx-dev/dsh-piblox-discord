@@ -4,6 +4,9 @@
 Target surface = what the plugin is meant to become.  
 V1 = first shippable increment that proves the architecture.
 
+**LOCKED:** Modern Discord API / Components V2 baseline (ADR-0007).  
+Designed against the **current Discord Developer Platform (2026)**, not legacy bot patterns.
+
 ## Classification legend
 
 | Class | Meaning |
@@ -15,19 +18,52 @@ V1 = first shippable increment that proves the architecture.
 
 ---
 
+## Platform baseline (LOCKED)
+
+| Item | Lock |
+|---|---|
+| Discord HTTP API | explicit **`v10`** (transport-layer only; must not leak into DSH contracts) |
+| Client direction | current **`discord.js` 14.x** |
+| Deprecated Discord endpoints | not architectural dependencies |
+| Gateway | intents / reconnect / resume semantics |
+| REST | rate-limit headers / buckets / `Retry-After` |
+| Components V2 | first-class transport/render primitive (not a later bolt-on) |
+| Bitfields | lossless; do not assume signed 32-bit is enough |
+| Forward compatibility | typed known surface + raw envelope + policy-gated REST escape hatch |
+
+---
+
 ## Connectivity
 
 | Feature | Class | Notes |
 |---|---|---|
 | Multiple Discord accounts / bots | V1 MUST | LOCKED multi-account |
-| Gateway connect per account | V1 MUST | |
-| REST client per account | V1 MUST | |
+| Modern Gateway foundation | V1 MUST | intents, reconnect, resume |
+| Modern REST foundation (`v10`) | V1 MUST | API version isolated in transport |
+| Rate-limit buckets + Retry-After | V1 MUST | |
 | Intents configuration | V1 MUST | least-privilege per account |
-| Reconnect / resume | V1 MUST | |
 | Credential references (no inline tokens) | V1 MUST | via `secrets.resolve` OBSERVED |
-| FakeTransport / test doubles | V1 MUST | design + testability without live Discord |
-| Application command registration automation | V2 | optional manual register in V1 SHOULD |
-| Sharding | LATER | only if account scale requires |
+| FakeTransport / test doubles | V1 MUST | inject 429 / Components V2 payloads |
+| Forward-compatible transport envelope | V1 MUST | typed + bounded raw metadata |
+| Policy-gated low-level REST escape hatch | V1 MUST | new Discord endpoints without arch rewrite |
+| Application command registration automation | V1 SHOULD | target model includes all command types |
+| HTTP interaction endpoint delivery | V2 | V1 may be Gateway-only; contract is delivery-agnostic |
+| Incoming webhooks | V2 | transport capability; not excluded |
+| Discord Webhook Events | V2 | |
+| Sharding enhancements | LATER | scale-driven |
+
+## Installation & command contexts (LOCKED model)
+
+| Feature | Class | Notes |
+|---|---|---|
+| Understand `GUILD_INSTALL` | V1 MUST | typical V1 production config |
+| Understand `USER_INSTALL` | V1 MUST (model) / V2 (ops support) | **do not hard-code GUILD_INSTALL-only into contracts** |
+| Interaction contexts (guild, bot DM, private channel where supported) | V1 MUST (model) | |
+| CHAT_INPUT / slash commands | V1 SHOULD | do not assume `command = guild slash` |
+| USER commands | V2 | represent in target contract now |
+| MESSAGE commands | V2 | |
+| Autocomplete | V2 | |
+| Installation context metadata on interactions | V1 MUST | normalized field even if V1 config is guild-only |
 
 ## Guild / channel model
 
@@ -40,36 +76,80 @@ V1 = first shippable increment that proves the architecture.
 | Categories | V1 SHOULD | admin tools primarily |
 | Forums | V2 | if Discord API support validated |
 | Stage channels | LATER | |
-| Voice join / audio pipeline | LATER | see Future |
+| Voice join / audio pipeline | LATER | |
 
-## Messaging
+## Modern message model
+
+Target contract accounts for current Discord capabilities. V1 implements a subset.
 
 | Feature | Class | Notes |
 |---|---|---|
-| Send | V1 MUST | |
-| Reply | V1 MUST | |
-| Edit | V1 MUST | |
+| Send / reply / edit | V1 MUST | |
+| Message references | V1 MUST | |
+| Allowed mentions control | V1 MUST | default suppress unsafe parsing |
+| Attachments + File component | V1 MUST | |
+| Components V2 foundation | V1 MUST | see below — **not** legacy-first |
+| Legacy `content` + embeds + ActionRow compatibility | V1 MUST | supported, not the primary design center |
+| Chunking / truncation strategy | V1 MUST | platform limits for content + component trees |
+| Deterministic `nonce` + `enforce_nonce=true` on Create Message | V1 MUST | Discord-native idempotency; **no** invented HTTP `Idempotency-Key` |
 | Delete | V1 SHOULD | policy-gated |
 | History / read | V1 SHOULD | |
-| Mentions (parse control) | V1 MUST | default suppress unsafe mention parsing |
-| Chunking / truncation strategy | V1 MUST | Discord 2000 char limit |
-| Attachments basic (inbound + outbound) | V1 MUST | size ceilings TBD |
-| Embeds | V1 SHOULD | |
-| Components V2 / rich layout | V2 | |
+| Embeds (legacy) | V1 SHOULD | compatibility |
+| Forwarding / message snapshots | V2 | represent in target model |
+| Polls | V2 | |
+| Voice-message metadata | V2 | metadata only; not voice transport |
 | Message search | LATER | only if Discord API allows for bot |
+
+## Components V2 (LOCKED — first-class)
+
+Do **not** design the renderer around legacy `content + embeds + ActionRow` and bolt V2 later.
+Transport/render contract must natively represent current component families:
+
+| Component family | Contract representation | Convenience API |
+|---|---|---|
+| Action Row | V1 MUST | V1 |
+| Button | V1 MUST | V1 typed primitive |
+| String Select | V1 MUST | V1 basic |
+| User Select | V1 MUST (model) | V1 basic / V2 richer |
+| Role Select | V1 MUST (model) | V1 basic / V2 richer |
+| Mentionable Select | V1 MUST (model) | V2 convenience |
+| Channel Select | V1 MUST (model) | V1 basic / V2 richer |
+| Section | V1 MUST | V1 typed primitive |
+| Text Display | V1 MUST | V1 typed primitive |
+| Thumbnail | V1 MUST (model) | V2 convenience |
+| Media Gallery | V1 MUST (model) | V2 convenience |
+| File | V1 MUST | V1 typed primitive |
+| Separator | V1 MUST (model) | V2 convenience |
+| Container | V1 MUST | V1 typed primitive |
+| Label | V1 MUST (model) | V2 (esp. modals) |
+| Text Input | V1 MUST (model) | V2 modals |
+| File Upload | V1 MUST (model) | V2 |
+| Radio Group | V1 MUST (model) | V2 |
+| Checkbox Group | V1 MUST (model) | V2 |
+| Checkbox | V1 MUST (model) | V2 |
+
+**V1 typed primitives (suggested):** Text Display, Container, Section, Button, basic selects, File/attachments.  
+Full advanced convenience APIs → V2.  
+Unknown/future component types → bounded raw component nodes (forward-compatible).
 
 ## Interaction framework
 
 | Feature | Class | Notes |
 |---|---|---|
+| Normalized interaction contract (delivery-agnostic) | V1 MUST | Gateway now; HTTP endpoint later |
 | Buttons | V1 MUST | intent transport only |
-| Deferred replies / follow-ups | V1 MUST | Discord 3s ack window |
+| Basic selects | V1 MUST | |
+| Deferred replies / follow-ups | V1 MUST | Discord ack window |
 | Ephemeral responses | V1 SHOULD | |
-| Slash commands | V1 SHOULD | basic set |
-| Select menus | V2 | |
-| Modals | V2 | |
+| Modern modal framework (Label, Text Input, selects, File Upload, Radio/Checkbox groups) | V2 | target contract must support; not text-input-only |
 | Autocomplete | V2 | |
-| User / message context commands | V2 | |
+
+## Interaction delivery modes
+
+| Mode | Class | Notes |
+|---|---|---|
+| Gateway interactions | V1 MUST | |
+| HTTP interaction endpoint | V2 | adapter; consumers ignore delivery mode |
 
 ## Reactions
 
@@ -82,7 +162,7 @@ V1 = first shippable increment that proves the architecture.
 
 | Feature | Class | Notes |
 |---|---|---|
-| User / member / role / permission context on events | V1 MUST | for allowlists + consumer policy |
+| User / member / role / permission context | V1 MUST | lossless permission bitfields |
 | Member list tooling | V1 SHOULD | |
 | Role list tooling | V1 SHOULD | |
 
@@ -95,22 +175,28 @@ All **policy-gated**. Never claim Discord-impossible operations.
 | Channel create / edit / delete | V2 | |
 | Category ops | V2 | |
 | Role create / edit / assign | V2 | |
-| Permissions inspect | V1 SHOULD | |
+| Permissions inspect | V1 SHOULD | lossless bitfields |
 | Permissions edit | V2 | |
 | Member timeout / kick / ban | V2 | high audit |
-| Webhooks | LATER | |
+
+## Webhooks (target — not excluded)
+
+| Feature | Class | Notes |
+|---|---|---|
+| Incoming webhooks | V2 | Discord transport capability |
+| Discord Webhook Events | V2 | |
 
 ## DSH integration
 
 | Feature | Class | Notes |
 |---|---|---|
-| ConversationBinding adapter | V1 MUST | OBSERVED service — no parallel store |
+| ConversationBinding adapter | V1 MUST | OBSERVED — no parallel store |
 | Inbound session resolution | V1 MUST | |
 | Outbound targeting (channel/thread/DM) | V1 MUST | |
 | Proactive notifications | V1 MUST | target aliases in config |
-| Event normalization | V1 MUST | |
+| Event normalization + unknown-event envelope | V1 MUST | do not silently drop new Gateway events |
 | Tool surface basic | V1 MUST | |
-| Multi-agent binding primitives | V1 SHOULD | routing hints only — not become dsh-router |
+| Multi-agent binding primitives | V1 SHOULD | routing hints only |
 | Observability integration | V1 MUST | map into closed Core event types (OPEN mapping) |
 | Approval intent relay to `ctx.approval` | V1 SHOULD | OPEN park API gap |
 
@@ -118,51 +204,49 @@ All **policy-gated**. Never claim Discord-impossible operations.
 
 | Feature | Class | Notes |
 |---|---|---|
-| Rate-limit buckets + Retry-After | V1 MUST | prevent Atlas-class partial failure |
+| Rate-limit buckets + Retry-After | V1 MUST | |
 | Retry / backoff | V1 MUST | |
 | Outbound queue / outbox | V1 MUST | |
 | Inbound dedupe | V1 MUST | |
-| Outbound idempotency keys | V1 MUST | |
+| Create Message: `nonce` + `enforce_nonce` | V1 MUST | Discord-native; no generic HTTP Idempotency-Key |
+| Other ops: durable operation IDs + Discord resource IDs + reconciliation | V1 MUST | |
 | Delivery state machine | V1 MUST | |
 | Correlation ids | V1 MUST | via observability |
-| Crash / restart recovery of outbox | V1 MUST | durable outbox PROPOSED |
-| Partial failure recovery (multi-message builds) | V1 MUST | transactional outbox groups |
+| Crash / restart recovery of outbox | V1 MUST | |
+| Partial failure recovery (multi-step / component trees) | V1 MUST | |
 | Delivery receipts to callers | V1 SHOULD | |
 
-## Future (evaluate, do not force into V1)
+## LATER
 
 | Feature | Class | Notes |
 |---|---|---|
-| Voice | LATER | |
+| Voice transport / audio | LATER | |
 | STT / TTS | LATER | domain/media plugins |
 | Stage | LATER | |
-| Advanced media / streaming | LATER | |
-| Marketplace / Activities | LATER | |
+| Activities / Social SDK | LATER | only if justified |
+| Scale-driven sharding enhancements | LATER | |
 
 ---
 
 ## V1 summary (justified)
 
-V1 proves:
+V1 proves modern Discord ↔ DSH without becoming full Discord coverage:
 
 ```text
 Discord → ConversationBinding → DSH session → Discord
 ```
 
-and leaves room for later:
+**V1 MUST includes:** multi-account; Gateway+REST `v10` foundation; secrets refs;
+guild/channel/thread/DM; Components V2 foundation + legacy compatibility;
+basic modern message model (send/reply/edit, references, mentions, attachments/File);
+buttons + basic selects; defer/follow-up; event normalization + forward-compatible
+envelope; `nonce`/`enforce_nonce`; rate-limit/429; outbox/retry/dedupe; observability
+adapter; FakeTransport; installation/context fields in the model (even if ops start
+GUILD_INSTALL-only).
 
-```text
-Domain plugin → discord.* tools → Discord
-Discord button → ApprovalIntent → domain → policy → executor
-```
+**V1 excludes (implementation):** full Components V2 convenience API; modern modals;
+polls; user/message commands ops; USER_INSTALL ops; HTTP interactions; webhooks;
+voice; full admin surface; product-specific agents.
 
-**Included:** multi-account, Gateway+REST, credentials refs, guild/channel/thread/DM
-context, inbound messages, outbound send/reply/edit, basic attachments, binding,
-session routing adapter, proactive outbound, basic buttons, event normalization,
-basic tools, rate-limit/429, retry/backoff, dedupe/idempotency, delivery state,
-observability adapter, FakeTransport design.
-
-**Excluded from V1:** voice, full admin surface, select/modals, reaction-driven
-flows, Components V2, product-specific agents.
-
-This is enough to demonstrate architecture without becoming “all of Discord”.
+This remains enough to demonstrate architecture without redesign when Discord adds
+components, events, or REST features.

@@ -12,10 +12,11 @@ State ownership mixes **OBSERVED** Core owners and **PROPOSED** plugin transport
 | Conversation ↔ session binding | `conversationBinding` | yes | OBSERVED — **no parallel store** |
 | Discord channel/thread/message IDs | Discord + event payloads / outbox refs | ephemeral + refs in outbox | Platform truth is Discord |
 | Outbound delivery jobs | Plugin outbox | **yes (PROPOSED)** | Survive crash mid-send |
-| Idempotency keys (outbound) | Plugin outbox index | yes | Prevent duplicate side effects |
+| Create Message `nonce` map | Plugin outbox index | yes | Discord-native idempotency (`enforce_nonce`); **no** HTTP Idempotency-Key |
+| Durable operation IDs (non-create-message) | Plugin outbox index | yes | Reconcile with returned Discord resource IDs |
 | Inbound event dedupe window | Plugin dedupe store | yes (TTL) | Prevent double session prompts |
 | Interaction ack / follow-up state | Plugin (memory + durable if multi-step) | hybrid | Discord 3s window; follow-ups may outlive process |
-| Slash command registration state | Plugin / Discord Application | yes (Discord + local cache) | Avoid re-register storms |
+| Application command registration state | Plugin / Discord Application | yes (Discord + local cache) | CHAT_INPUT / USER / MESSAGE; avoid re-register storms |
 | Rate-limit bucket state | Plugin REST layer | memory (+ optional durable) | Buckets are short-lived; durable optional |
 | Retry state | Plugin outbox | yes | Tied to delivery jobs |
 | Delivery receipts | Plugin → caller | yes (job record) | Consumer confirmation |
@@ -38,10 +39,21 @@ accepted → queued → sending → delivered
 |---|---|
 | `accepted` | API/tool validated inputs; job persisted |
 | `queued` | Waiting for rate-limit slot / worker |
-| `sending` | REST in flight |
-| `delivered` | Discord acknowledged (message id stored) |
+| `sending` | REST v10 in flight |
+| `delivered` | Discord acknowledged (message id / resource id stored) |
 | `retry_wait` | Transient failure; backoff scheduled (`Retry-After` honored) |
 | `failed_terminal` | Non-retryable or attempts exhausted |
+
+### Create Message idempotency (LOCKED)
+
+For Discord **Create Message**:
+
+- Use a deterministic **`nonce`** derived from the durable operation identity.
+- Set **`enforce_nonce=true`** where applicable so Discord rejects duplicates.
+- Do **not** invent a generic Discord HTTP `Idempotency-Key` header.
+
+Other mutating operations use durable operation IDs + returned Discord resource IDs
++ operation-specific reconciliation (not a fake global idempotency header).
 
 ### Multi-step outbound groups (critical)
 
@@ -66,11 +78,13 @@ received → acknowledged → dispatched → completed
 
 | State | Meaning |
 |---|---|
-| `received` | Gateway interaction accepted; dedupe recorded |
+| `received` | Interaction accepted (Gateway or HTTP endpoint); dedupe recorded |
 | `acknowledged` | Discord ack/defer within platform deadline |
 | `dispatched` | Intent handed to consumer / session / approval path |
-| `completed` | Follow-up response sent or intentionally silent |
+| `completed` | Follow-up response sent (legacy and/or Components V2) or intentionally silent |
 | `failed` | Acked but completion failed — may retry follow-up only |
+
+Delivery mode must not change this state machine.
 
 ## 4. Failure semantics
 

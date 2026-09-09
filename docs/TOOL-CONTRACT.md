@@ -55,13 +55,26 @@ All tools take `account_id` (or resolve a default only if exactly one account en
 
 | | |
 |---|---|
-| Purpose | Send message to channel/DM |
-| Inputs | `account_id`, `channel_id`, `content` / embeds / files, optional `idempotency_key` |
-| Output | `message_id`, delivery state |
-| Discord perms | SendMessages (+ AttachFiles) |
+| Purpose | Send message to channel/DM (legacy and/or Components V2 tree) |
+| Inputs | `account_id`, `channel_id`, `content`? / embeds? / `components`? / files, optional durable `operation_id` |
+| Output | `message_id`, delivery state, `nonce` used |
+| Discord perms | SendMessages (+ AttachFiles / component-related as required) |
 | Policy | L1–L2 (PROPOSED) |
-| Idempotency | **required** when key provided — same key → same message, no dup |
+| Idempotency | Map `operation_id` → Discord **`nonce`** + **`enforce_nonce=true`** where applicable. Do **not** send a fabricated HTTP `Idempotency-Key`. |
 | Audit | yes for non-ephemeral ops traffic |
+
+### `discord.rest.raw` (escape hatch — V1 MUST capability)
+
+| | |
+|---|---|
+| Purpose | Call an unsupported/new Discord REST `v10` endpoint without architecture rewrite |
+| Inputs | `account_id`, method, path, body?, durable `operation_id` |
+| Output | status, bounded/redacted body, rate-limit metadata |
+| Discord perms | whatever the endpoint requires |
+| Policy | **always classified** (default high / APPROVAL for unknown mutating paths) |
+| Idempotency | durable `operation_id` + Discord resource reconciliation when applicable |
+| Audit | **required** |
+| Guards | credentials, rate-limit, allowlists, redaction — **must not** bypass DSH policy |
 
 ### `discord.message.reply` / `edit` / `delete`
 
@@ -137,12 +150,13 @@ Inputs always include `account_id`, target snowflakes, reason string, and
 
 ## Classification for V1 vs later
 
-**V1 MUST tools:** `channel.get`, `message.send`, `message.reply`, `message.edit`,
-`thread.create` (basic), `guild.list` (basic).
+**V1 MUST tools:** `channel.get`, `message.send` (V2-capable), `message.reply`,
+`message.edit`, `thread.create` (basic), `guild.list` (basic), `rest.raw` (gated).
 
 **V1 SHOULD:** `message.history`, `message.delete`, `permissions.inspect`.
 
-**V2+:** full `discord.admin.*`, reactions, selects-related helpers.
+**V2+:** full `discord.admin.*`, reactions, modal helpers, webhook tools,
+richer select/media convenience APIs.
 
 ## OPEN
 

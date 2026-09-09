@@ -54,6 +54,10 @@ Those belong in consumer plugins / domain seats that call this provider.
               → ConversationBinding + DSH routing
 ```
 
+**Also LOCKED:** Modern Discord API / Components V2 baseline — HTTP **`v10`**,
+**`discord.js` 14.x** direction, Components V2 as first-class transport/render
+(not legacy ActionRow-first). See [docs/adr/0007-modern-discord-baseline.md](docs/adr/0007-modern-discord-baseline.md).
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/adr/](docs/adr/).
 
 ## Design documents
@@ -62,7 +66,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/adr/](docs/adr/).
 |---|---|
 | [DESIGN-STATUS.md](DESIGN-STATUS.md) | Decision matrix (LOCKED / PROPOSED / OPEN / BLOCKED) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Logical architecture |
-| [docs/FEATURE-CONTRACT.md](docs/FEATURE-CONTRACT.md) | Target surface + V1/V2/LATER |
+| [docs/FEATURE-CONTRACT.md](docs/FEATURE-CONTRACT.md) | Target surface + V1/V2/LATER (Components V2 in V1 MUST) |
 | [docs/DSH-INTEGRATION.md](docs/DSH-INTEGRATION.md) | Observed DSH contracts + binding keys |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Multi-account config schema |
 | [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) | Normalized Discord events |
