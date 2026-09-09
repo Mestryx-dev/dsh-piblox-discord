@@ -41,7 +41,14 @@ export function createAccountsConfigStore(options) {
   const lockPath = `${storePath}.lock`
 
   function empty() {
-    return { version: 1, transport: 'fake', allowConnect: false, accounts: {} }
+    return {
+      version: 1,
+      transport: 'fake',
+      allowConnect: false,
+      accounts: {},
+      /** Once true, Cordis boot must never rehydrate accounts (delete-all must stick). */
+      accountsOwned: false,
+    }
   }
 
   function load() {
@@ -54,7 +61,12 @@ export function createAccountsConfigStore(options) {
       allowConnect: parsed.allowConnect,
       accounts: parsed.accounts || {},
     })
-    return { version: Number(parsed.version) || 1, ...normalized }
+    return {
+      version: Number(parsed.version) || 1,
+      ...normalized,
+      // Any on-disk ledger is operator-owned (incl. intentionally empty after delete).
+      accountsOwned: true,
+    }
   }
 
   /** @param {{ version: number, transport: string, accounts: Record<string, any> }} data */
@@ -118,7 +130,9 @@ export function createAccountsConfigStore(options) {
   }
 
   /**
-   * Seed empty ledger from Cordis/plugin boot config once.
+   * Import Cordis/plugin boot accounts only on first install (no ledger file yet).
+   * After that the operator owns the ledger: empty after delete must never rehydrate.
+   * Profile boot still refreshes transport / allowConnect on every start (safety gate).
    * @param {import('./config.js').PluginConfig} seed
    */
   async function seedFromBootConfig(seed) {
@@ -127,8 +141,19 @@ export function createAccountsConfigStore(options) {
       // Profile boot owns transport/allowConnect flags (live Gateway safety gate).
       data.transport = normalized.transport
       data.allowConnect = normalized.allowConnect
-      if (Object.keys(data.accounts).length > 0) return { seeded: false, data }
+
+      if (data.accountsOwned) {
+        return { seeded: false, data }
+      }
+
+      // Existing durable file (migration / post-delete): claim ownership, do not copy boot accounts.
+      if (existsSync(storePath)) {
+        data.accountsOwned = true
+        return { seeded: false, data }
+      }
+
       data.accounts = { ...normalized.accounts }
+      data.accountsOwned = true
       return { seeded: true, data }
     })
   }

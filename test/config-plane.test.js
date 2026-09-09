@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import { describe, it, beforeEach, afterEach } from 'node:test'
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStore } from '../../dsh-piblox-secrets/dist/store/index.js'
@@ -411,6 +411,56 @@ describe('accounts config store SSOT', () => {
       assert.equal(r2.seeded, false)
       assert.ok(store.snapshot().accounts.lab)
       assert.equal(store.snapshot().accounts.other, undefined)
+      assert.equal(store.snapshot().accountsOwned, true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reseed after operator deletes all accounts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-discord-seed-del-'))
+    try {
+      const storePath = join(dir, 'accounts.json')
+      const store = createAccountsConfigStore({ storePath })
+      await store.seedFromBootConfig({
+        accounts: {
+          lab: { enabled: true, allowAllGuilds: true, allowAllChannels: true },
+        },
+      })
+      await store.withLock((data) => {
+        delete data.accounts.lab
+      })
+      assert.deepEqual(store.snapshot().accounts, {})
+      const r = await store.seedFromBootConfig({
+        accounts: {
+          lab: { enabled: true, allowAllGuilds: true, allowAllChannels: true },
+        },
+      })
+      assert.equal(r.seeded, false)
+      assert.equal(store.snapshot().accounts.lab, undefined)
+      assert.deepEqual(store.snapshot().accounts, {})
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reseed an existing empty durable ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-discord-seed-empty-'))
+    try {
+      const storePath = join(dir, 'accounts.json')
+      writeFileSync(
+        storePath,
+        `${JSON.stringify({ version: 1, transport: 'fake', allowConnect: false, accounts: {} }, null, 2)}\n`,
+      )
+      const store = createAccountsConfigStore({ storePath })
+      const r = await store.seedFromBootConfig({
+        accounts: {
+          lab: { enabled: true, allowAllGuilds: true, allowAllChannels: true },
+        },
+      })
+      assert.equal(r.seeded, false)
+      assert.equal(store.snapshot().accounts.lab, undefined)
+      assert.equal(store.snapshot().accountsOwned, true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

@@ -133,3 +133,7 @@ Empty allowlist text boxes mean **deny all**. Broad access requires explicit che
 ## Ledger path
 
 Default: `~/dsh-lab/runtime/dsh-home/ledger/discord-accounts.json`
+
+Cordis `accounts` is a **first-install seed only** (no ledger file yet). After the file exists,
+the operator owns it: deleting all accounts must stay empty across plugin restart — boot config
+must not rehydrate accounts. Profile boot still refreshes `transport` / `allowConnect` each start.
