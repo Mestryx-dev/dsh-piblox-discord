@@ -29,6 +29,14 @@ describe('error classification + backoff', () => {
     assert.equal(computeBackoffMs(2, { baseMs: 100, maxMs: 1000 }), 200)
     assert.equal(computeBackoffMs(5, { baseMs: 100, maxMs: 1000 }), 1000)
   })
+
+  it('nonceFromOperationId stays ≤25 chars for long stream operation ids', () => {
+    const longId = 'stream:discord-45d225c6-f148-4ee8-8d85-52e746e53cc9:t1:send:1'
+    const nonce = nonceFromOperationId(longId)
+    assert.ok(nonce.length <= 25, `nonce length ${nonce.length} > 25`)
+    assert.equal(nonce, nonceFromOperationId(longId))
+    assert.notEqual(nonce, nonceFromOperationId(`${longId}:x`))
+  })
 })
 
 describe('durable outbox', () => {

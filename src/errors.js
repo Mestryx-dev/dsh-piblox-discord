@@ -5,6 +5,8 @@
  *   transport_failure | discord_domain_failure | dsh_failure | policy_denial
  */
 
+import { createHash } from 'node:crypto'
+
 /**
  * @typedef {'transport_failure'|'discord_domain_failure'|'dsh_failure'|'policy_denial'} ErrorClass
  * @typedef {'retryable'|'terminal'|'ambiguous'} RetryKind
@@ -132,9 +134,13 @@ export function computeBackoffMs(attemptCount, opts = {}) {
 
 /**
  * Deterministic Discord Create Message nonce from operation_id.
+ * Discord enforces nonce length ≤ 25 characters (API v10).
  * @param {string} operationId
+ * @returns {string}
  */
 export function nonceFromOperationId(operationId) {
-  // Discord accepts string nonces; keep printable and stable.
-  return `dsh_${String(operationId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24)}`
+  // Hash keeps long stream operation ids (session UUID + turn) within Discord's 25-char cap.
+  // Do not prefix with `dsh_` after a 24-char slice — that produced 28-char nonces and
+  // failed inaugural thread sends (sendMessage) while replyMessage paths stayed healthy.
+  return createHash('sha256').update(String(operationId || '')).digest('hex').slice(0, 25)
 }
