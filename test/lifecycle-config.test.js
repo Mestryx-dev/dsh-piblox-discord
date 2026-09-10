@@ -22,6 +22,7 @@ describe('plugin lifecycle', () => {
       'secrets',
       'agentPresets',
       'agentDefaultModel',
+      'tools',
     ])
   })
 

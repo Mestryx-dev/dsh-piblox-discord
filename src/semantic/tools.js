@@ -15,10 +15,10 @@ const RECEIPT_SCHEMA = {
     operation_id: { type: 'string' },
     account_id: { type: 'string' },
     state: { type: 'string' },
-    discord_resource_id: { type: ['string', 'null'] },
+    discord_resource_id: { type: 'string' },
     attempts: { type: 'number' },
-    error_class: { type: ['string', 'null'] },
-    correlation_id: { type: ['string', 'null'] },
+    error_class: { type: 'string' },
+    correlation_id: { type: 'string' },
   },
   additionalProperties: true,
 }

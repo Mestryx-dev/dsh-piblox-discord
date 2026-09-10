@@ -29,15 +29,17 @@ import {
  * @returns {SemanticReceipt}
  */
 export function toSemanticReceipt(receipt) {
-  return {
-    operation_id: receipt.operation_id,
-    account_id: receipt.account_id,
-    state: receipt.state,
-    discord_resource_id: receipt.discord_resource_id,
-    attempts: receipt.attempts,
-    error_class: receipt.error_class,
-    correlation_id: receipt.correlation_id,
+  /** @type {SemanticReceipt} */
+  const out = {
+    operation_id: String(receipt.operation_id),
+    account_id: String(receipt.account_id),
+    state: String(receipt.state),
+    attempts: Number(receipt.attempts) || 0,
   }
+  if (receipt.discord_resource_id != null) out.discord_resource_id = String(receipt.discord_resource_id)
+  if (receipt.error_class != null) out.error_class = String(receipt.error_class)
+  if (receipt.correlation_id != null) out.correlation_id = String(receipt.correlation_id)
+  return out
 }
 
 /**
