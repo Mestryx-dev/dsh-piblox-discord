@@ -287,6 +287,7 @@ describe('tool wrappers + policy path', () => {
       'discord_message_send',
       'discord_message_reply',
       'discord_message_edit',
+      'discord_message_delete',
       'discord_thread_create',
     ]) {
       assert.ok(names.includes(n), n)
