@@ -210,6 +210,7 @@ assistant/chunk|message | DSH consumer / messages API
 **Idempotency (LOCKED principle):**
 
 - Create Message → Discord `nonce` + `enforce_nonce=true` where applicable.
+  Nonce must be ≤ **25** characters (`nonceFromOperationId` → SHA-256 hex slice). Observed live failure when a longer derived nonce blocked inaugural thread `sendMessage` while `replyMessage` (no nonce) still worked.
 - Thread create → durable `operation_id` = `thread:create:<account_id>:<parent_message_id>`; reconcile via outbox receipt / Discord starter-message thread (no invented HTTP Idempotency-Key).
 - Do **not** invent a generic Discord HTTP `Idempotency-Key`.
 - Other operations → durable operation IDs + returned Discord resource IDs + reconciliation.

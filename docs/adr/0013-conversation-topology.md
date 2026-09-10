@@ -56,3 +56,4 @@ the same session. Proactive send into a locked/archived thread may fail cleanly.
 - `test/thread-topology.test.js`
 - Binding encoding: ADR-0010 / `test/binding.test.js`
 - Outbox `createThread` + resource id = thread snowflake
+- Live LAB (2026-09-10): inaugural thread `sendMessage` requires Discord nonce ≤25 (`nonceFromOperationId`); fixed in follow-up commit after `NONCE_TYPE_TOO_LONG` on first topology smoke

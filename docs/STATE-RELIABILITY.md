@@ -58,7 +58,7 @@ Never permanently strand operations in `sending` after `recoverOnLoad()`.
 
 ### Create Message idempotency (LOCKED + TESTED)
 
-- Deterministic **`nonce`** from `operation_id`
+- Deterministic **`nonce`** from `operation_id` via `nonceFromOperationId` (**LOCKED:** Discord Create Message nonce ≤ **25** characters — use SHA-256 hex prefix, not raw/`dsh_`+slice which overflowed to 28 and failed inaugural thread `sendMessage`)
 - **`enforce_nonce=true`** on FakeTransport Create Message path
 - Duplicate `operation_id` enqueue returns existing receipt (no second job)
 - Ambiguous timeout with `applyDespiteFailure` + nonce → retry returns same resource (no duplicate)
