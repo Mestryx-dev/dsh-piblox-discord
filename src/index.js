@@ -406,11 +406,34 @@ export function createDiscordProvider(deps, config = {}) {
           if (!tools || typeof tools.execute !== 'function') {
             throw new Error('tools runtime unavailable — cannot prove tools/pre-execute path')
           }
+          const visible = typeof tools.get === 'function' ? tools.get('discord_message_send') : null
+          // eslint-disable-next-line no-console
+          console.info(
+            `discord LAB tool smoke: registry_has_discord_message_send=${Boolean(visible)}`,
+          )
+          const policy = api._policy
+          if (policy && typeof policy.evaluate === 'function') {
+            const decision = policy.evaluate({
+              tool: 'discord_message_send',
+              args,
+            })
+            // eslint-disable-next-line no-console
+            console.info(
+              `discord LAB tool smoke: policy decision=${decision.decision} risk=${decision.risk} action=${decision.action}`,
+            )
+          } else {
+            // eslint-disable-next-line no-console
+            console.info('discord LAB tool smoke: policy service unavailable for classify log')
+          }
+          // Under PTC mode, model-direct native tool names collapse to UNKNOWN_TOOL unless
+          // nested under a transport parent. LAB smoke marks a synthetic nested dispatch so
+          // the real tools.execute → tools/pre-execute → policy → body path still runs.
           const result = await tools.execute({
             name: 'discord_message_send',
             arguments: args,
             callId: `lab-discord-tool-${Date.now()}`,
             signal: AbortSignal.timeout(120_000),
+            parent: /** @type {any} */ (Symbol('dsh-lab-discord-tool-smoke')),
           })
           // eslint-disable-next-line no-console
           console.info(
@@ -540,8 +563,8 @@ export function apply(ctx, config = {}) {
         registerDiscordTools(
           {
             tools: toolsCtx.tools,
-            effect: toolsCtx.effect?.bind(toolsCtx) || ctx.effect?.bind(ctx),
-            logger: ctx.logger,
+            effect: typeof toolsCtx.effect === 'function' ? toolsCtx.effect.bind(toolsCtx) : undefined,
+            logger: toolsCtx.logger || ctx.logger,
           },
           provider.semantic,
           { names: config.toolNames },
@@ -551,6 +574,17 @@ export function apply(ctx, config = {}) {
       ctx.logger?.warn?.(
         `dsh-piblox-discord: tools inject skipped — ${err instanceof Error ? err.message : err}`,
       )
+    }
+  }
+
+  // Soft-capture policy for LAB tool smoke classification logs.
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['policy'], (pctx) => {
+        provider._policy = /** @type {any} */ (pctx).policy
+      })
+    } catch {
+      /* optional */
     }
   }
 

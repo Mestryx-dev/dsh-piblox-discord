@@ -281,14 +281,19 @@ export function registerDiscordTools(ctx, service, opts = {}) {
   const registered = []
   for (const def of defs) {
     if (allow && !allow.has(def.name)) continue
+    const register = () => ctx.tools.register(def)
     if (typeof ctx.effect === 'function') {
-      ctx.effect(() => ctx.tools.register(def), `dsh-piblox-discord: ${def.name}`)
+      // Same Cordis scope as tools (secrets cookbook) — do not fall back to a parent effect.
+      ctx.effect(register, `dsh-piblox-discord: ${def.name}`)
     } else {
-      ctx.tools.register(def)
+      register()
     }
     registered.push(def.name)
   }
   ctx.logger?.info?.(`dsh-piblox-discord: model tools registered ${registered.join(',')}`)
+  // Always surface on stdout for LAB smoke diagnostics (logger may be quiet).
+  // eslint-disable-next-line no-console
+  console.info(`dsh-piblox-discord: model tools registered count=${registered.length} names=${registered.join(',')}`)
   return registered
 }
 
