@@ -1,14 +1,16 @@
 # Architecture — dsh-piblox-discord
 
-**STATUS:** V1 TRANSPORT + CONFIG PLANE + COMPONENTS/INTERACTIONS FOUNDATION IMPLEMENTED  
+**STATUS:** V1 TRANSPORT + CONFIG PLANE + COMPONENTS/INTERACTIONS + **SEMANTIC SERVICE/TOOLS** IMPLEMENTED  
 (FakeTransport + Gateway LAB) / **PRODUCTION_READY = NO**  
-**Labels:** LOCKED intents from mission; OBSERVED DSH seams; IMPLEMENTED reliability + operator Settings + Components V2 encode + interaction path.
+**Labels:** LOCKED intents from mission; OBSERVED DSH seams; IMPLEMENTED reliability + operator Settings + Components V2 encode + interaction path + semantic `ctx.discord` + policy-gated `discord_*` tools.
 
 **LOCKED:** `Modern Discord API / Components V2 baseline = LOCKED` ([ADR-0007](adr/0007-modern-discord-baseline.md)) — Discord HTTP **`v10`**, **`discord.js` 14.x** direction, Components V2 as first-class transport/render primitive (not legacy ActionRow-first).
 
-**LOCKED:** `ALL_NORMAL_OUTBOUND_VIA_OUTBOX` — bridge + `messages` API enqueue only; transport writes are outbox-worker / test-only.
+**LOCKED:** `ALL_NORMAL_OUTBOUND_VIA_OUTBOX` — bridge + `messages` API + **semantic service/tools** enqueue only; transport writes are outbox-worker / test-only.
 
 **LOCKED:** Credential ownership = **dsh-piblox-secrets** (ADR-0012). Account config SSOT = plugin `discord-accounts.json` ledger (Cordis patch is boot seed only).
+
+**LOCKED:** Proactive notifications = **`ctx.discord` service** (`notify` / `messageSend`). Model-facing actions = **`ctx.tools` → tools/pre-execute → policy → discord_*** wrappers. Both share DeliveryOutbox. `discord.rest.raw` = deferred.
 
 ## 1. Logical stack
 
@@ -27,7 +29,8 @@ dsh-piblox-discord
   ├── messages / channels / threads
   ├── interactions (delivery-agnostic)
   ├── events (typed + unknown envelope)
-  ├── tools (discord.* / discord.admin.* + REST escape hatch)
+  ├── tools (discord_* model wrappers via ctx.tools; admin REST escape hatch deferred)
+  ├── semantic service (ctx.discord — guild/channel/message/thread + notify)
   ├── bindings adapter → conversationBinding
   ├── routing adapter → sessions / router (consumer-driven)
   ├── delivery / state (transport only; nonce / operation IDs)
@@ -36,6 +39,7 @@ dsh-piblox-discord
 DSH Core
 ├── conversationBinding   (OBSERVED service)
 ├── router / sessions / agents
+├── tools                 (OBSERVED — dsh-tools runtime)
 ├── policy                (OBSERVED service)
 ├── observability         (OBSERVED service)
 ├── secrets               (OBSERVED — dsh-piblox-secrets)
@@ -82,7 +86,8 @@ These are **logical** modules — not a mandated `src/` layout (no implementatio
 | **channels / threads** | Channel + thread metadata and create/list where permitted |
 | **interactions** | Delivery-agnostic interaction model; ack, defer, follow-up |
 | **events** | Typed `discord.*` + bounded unknown Gateway event envelope |
-| **tools** | `discord.*` / `discord.admin.*` + policy-gated low-level REST escape hatch |
+| **semantic** | Cordis `discord` service — normalized DTO reads + mutating outbox ops + `notify` |
+| **tools** | Model-facing `discord_*` wrappers via `ctx.tools` (policy-gated); `discord.rest.raw` deferred |
 | **bindings** | Build `provider/scope/external_id` → call `conversationBinding` |
 | **routing adapter** | Resolve session + hand off inbound content to DSH session/agent seams |
 | **delivery/state** | Outbox, operation IDs, Create Message nonce map, inbound dedupe |

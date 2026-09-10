@@ -8,6 +8,7 @@
 
 import { validateAccountId } from './secret-ref.js'
 import { normalizeIntents } from './intents.js'
+import { normalizeProactiveTargets } from './semantic/targets.js'
 
 /**
  * @typedef {{
@@ -34,7 +35,15 @@ import { normalizeIntents } from './intents.js'
  *   allowAllUsers?: boolean,
  *   dm?: DmConfig,
  *   ignoreBots?: boolean,
- *   proactiveTargets?: Record<string, { guildId?: string, channelId?: string }>,
+ *   proactiveTargets?: Record<string, {
+ *     kind?: 'channel'|'thread'|'dm',
+ *     id?: string,
+ *     channelId?: string,
+ *     threadId?: string,
+ *     userId?: string,
+ *     guildId?: string,
+ *     parentChannelId?: string,
+ *   }>,
  * }} AccountConfig
  */
 
@@ -129,18 +138,7 @@ export function normalizeAccountConfig(raw = {}) {
     raw.label != null && String(raw.label).trim() ? String(raw.label).trim() : undefined
 
   const intents = normalizeIntents(raw.intents ?? DEFAULT_ACCOUNT.intents)
-
-  /** @type {Record<string, { guildId?: string, channelId?: string }>} */
-  const proactiveTargets = {}
-  if (raw.proactiveTargets && typeof raw.proactiveTargets === 'object') {
-    for (const [key, val] of Object.entries(raw.proactiveTargets)) {
-      if (!val || typeof val !== 'object') continue
-      proactiveTargets[key] = {
-        guildId: val.guildId != null ? String(val.guildId) : undefined,
-        channelId: val.channelId != null ? String(val.channelId) : undefined,
-      }
-    }
-  }
+  const proactiveTargets = normalizeProactiveTargets(raw.proactiveTargets)
 
   return {
     ...DEFAULT_ACCOUNT,

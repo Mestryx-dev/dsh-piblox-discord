@@ -288,7 +288,7 @@ session.prompt → resolveAgent → followup
 | `workspaceRegistry` | **OPTIONAL** | workspace attach (webhook); Discord uses plugin `sessionCwd` → `meta.cwd` |
 | `sessionTitle` | **OPTIONAL** | human titles |
 | `observability` | **OPTIONAL** (recommended) | Core event bridge; soft-get OK if absent |
-| `tools` | **OPTIONAL** until registering `discord.*` tools | hard-inject when exposing tools (secrets pattern) |
+| `tools` | **OPTIONAL** soft-inject | registers `discord_*` when `exposeTools !== false` (default) |
 | `router` | **NOT_REQUIRED** | not on session path |
 | `policy` | **NOT_REQUIRED** as inject | when loaded in profile, `tools/pre-execute` applies globally |
 | `protocols` | **NOT_REQUIRED** | Task ledger not required for chat provider Core |
@@ -298,17 +298,23 @@ Upstream analogue inject (OBSERVED webhook):
 
 ---
 
-## 7. Tool registration (OBSERVED — no Discord tools registered yet)
+## 7. Tool registration (OBSERVED — semantic tools registered)
 
 | Concern | Evidence |
 |---|---|
-| Registration API | `ctx.tools.register(definition)` or `ctx.tools.register(name, def)` — first-party prefers **one-arg object** inside `ctx.effect` (`dsh-piblox-secrets`) |
-| Inject | `export const inject = ['tools']` when registering tools |
+| Registration API | `ctx.tools.register(definition)` — **one-arg object** with mandatory `output: { schema, render }` (`@deepseek-ai/dsh-tools`) |
+| Inject | Soft `ctx.inject(['tools'], …)` (secrets pattern) |
 | Schema | `name`, `description`, `parameters` (JSON Schema), `output`, `async execute` |
-| Policy path | Cordis waterfall **`tools/pre-execute`** (`@deepseek-ai/dsh-tools`) — `dsh-policy-engine` and `dsh-observability` both listen |
-| Auto traversal | **Yes** — any registered tool execution goes through `tools/pre-execute` when the tools runtime dispatches |
+| Tool ids | Underscore (`discord_message_send`); dotted `discord.*` via policy `tool_name_map` |
+| Policy path | Cordis waterfall **`tools/pre-execute`** — `dsh-policy-engine` + observability |
+| Auto traversal | **Yes** — `tools.execute` goes through pre-execute |
+| V1 mutation decision | Risk **L2**; compiled override → **AUTO** (Discord allowlists = scope gate). Default L2 without override = APPROVAL (+ park on web). |
+| Service vs tools | Proactive = `ctx.discord.notify`. Model = `discord_*` → semantic service → outbox |
+| Raw REST | `discord.rest.raw` **not registered** (DEFERRED_WITH_BLOCKER) |
 
 Manifest: Cordis bundle row via `cordis.patch.yml` / `package.json` `dsh.bundle.patch` (sibling plugins).
+
+**Presets:** registering tools does **not** auto-expose them to every agent. Permission / preset allowlists still apply.
 
 ---
 
@@ -318,6 +324,7 @@ Manifest: Cordis bundle row via `cordis.patch.yml` / `package.json` `dsh.bundle.
 
 - Service `policy`; APPROVAL park via `tools/pre-execute` + `ctx.approval`.
 - `policy.requestApproval()` remains a stub.
+- Discord semantic reads L0–L1; mutations L2 with V1 AUTO overrides (see §7).
 
 **NON-BLOCKING / V2:** Discord as `approvalChannel` / direct UI integration with
 `ctx.approval` is deferred until DSH exposes a stable approval-channel seam.
@@ -350,3 +357,6 @@ secrets.resolve(ref) → { ok, value? }
 **Closed (2026-09-09):** allowlist empty-list = deny all; V1 observability
 bridge-only (no Core EVENT_TYPES extension); approvalChannel = V2 / non-blocking;
 transport = `LOCKED_DIRECT_DISCORDJS` (ADR-0009).
+
+**Closed (2026-09-10):** proactive API = service; model tools = policy-gated `discord_*`;
+both share DeliveryOutbox; `discord.rest.raw` deferred.

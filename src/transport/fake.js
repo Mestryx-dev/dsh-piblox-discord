@@ -420,4 +420,86 @@ export class FakeTransport {
     this.outbound.push(sent)
     return sent
   }
+
+  /**
+   * Seed guild/channel/message fixtures for semantic read tools.
+   * @param {{
+   *   guilds?: Array<{ id: string, name?: string }>,
+   *   channels?: Array<{ id: string, name?: string, guildId?: string, parentId?: string, type?: number, isThread?: boolean }>,
+   *   messages?: Array<{ id: string, channelId: string, authorId?: string, content?: string, timestamp?: string }>,
+   * }} fixtures
+   */
+  seedDirectory(fixtures = {}) {
+    if (!this._guilds) this._guilds = new Map()
+    if (!this._channels) this._channels = new Map()
+    if (!this._messages) this._messages = new Map()
+    for (const g of fixtures.guilds || []) this._guilds.set(String(g.id), { ...g, id: String(g.id) })
+    for (const c of fixtures.channels || []) {
+      this._channels.set(String(c.id), {
+        ...c,
+        id: String(c.id),
+        guildId: c.guildId != null ? String(c.guildId) : undefined,
+        parentId: c.parentId != null ? String(c.parentId) : undefined,
+      })
+    }
+    for (const m of fixtures.messages || []) {
+      this._messages.set(`${m.channelId}:${m.id}`, {
+        ...m,
+        id: String(m.id),
+        channelId: String(m.channelId),
+      })
+    }
+  }
+
+  async listGuilds(accountId) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    return [...(this._guilds?.values() || [])]
+  }
+
+  async getChannel(accountId, channelId) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    const ch = this._channels?.get(String(channelId))
+    if (!ch) throw new TransportError('unknown_target', `unknown channel: ${channelId}`)
+    return ch
+  }
+
+  async listChannels(accountId, guildId, opts = {}) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    const limit = opts.limit || 50
+    return [...(this._channels?.values() || [])]
+      .filter((c) => String(c.guildId) === String(guildId))
+      .slice(0, limit)
+  }
+
+  async getMessage(accountId, channelId, messageId) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    const msg = this._messages?.get(`${channelId}:${messageId}`)
+    if (!msg) throw new TransportError('unknown_target', `unknown message: ${messageId}`)
+    return msg
+  }
+
+  async listMessages(accountId, channelId, opts = {}) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    const limit = opts.limit || 20
+    return [...(this._messages?.values() || [])]
+      .filter((m) => String(m.channelId) === String(channelId))
+      .slice(0, limit)
+  }
+
+  async resolveDmChannel(accountId, userId) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    return `dm_${userId}`
+  }
 }

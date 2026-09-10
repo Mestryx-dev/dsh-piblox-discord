@@ -241,9 +241,9 @@ All **policy-gated**. Never claim Discord-impossible operations.
 | ConversationBinding adapter | V1 MUST | OBSERVED — no parallel store |
 | Inbound session resolution | V1 MUST | |
 | Outbound targeting (channel/thread/DM) | V1 MUST | |
-| Proactive notifications | V1 MUST | target aliases in config |
+| Proactive notifications | V1 MUST | **LOCKED:** Cordis `ctx.discord.notify` / `messageSend` (service). Target aliases in account `proactiveTargets`. Does **not** mint ConversationBinding / session / AgentLoop. |
 | Event normalization + unknown-event envelope | V1 MUST | do not silently drop new Gateway events |
-| Tool surface basic | V1 MUST | |
+| Tool surface basic | V1 MUST | **LOCKED:** model-facing `discord_*` via `ctx.tools` → `tools/pre-execute` → policy → semantic service → outbox. Not a second dispatcher. |
 | Multi-agent binding primitives | V1 SHOULD | routing hints only |
 | Observability integration | V1 MUST | plugin `discord.*` + bridge to closed Core EVENT_TYPES (LOCKED — no Core schema extension in V1) |
 | Approval intent relay to `ctx.approval` | V2 | NON-BLOCKING; no parallel approval store; deferred until stable DSH approval-channel seam |

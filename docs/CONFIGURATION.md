@@ -87,6 +87,17 @@ discord:
         allowed_users: []                # LOCKED: empty = deny all (DM only)
         allow_all_users: false
       ignore_bots: true
+      # Account-local proactive / tool target aliases (no secrets)
+      proactiveTargets:
+        notifications:
+          kind: channel                  # channel | thread | dm
+          id: "123456789012345678"
+          guildId: "111111111111111111"
+        ops_thread:
+          kind: thread
+          id: "222222222222222222"
+          parentChannelId: "123456789012345678"
+          guildId: "111111111111111111"
 ```
 
 Guild MESSAGE_CREATE authorization order (LOCKED):
@@ -101,6 +112,10 @@ Missing parent → `thread_parent_unknown` (fail closed).
 
 Denied guild users never claim dedupe, create bindings, open sessions, follow up, or enqueue outbound.
 There is **no** Discord Administrator / permission-bit implicit bypass.
+
+**Proactive / tool outbound authorization (LOCKED):** after alias resolution, fail closed on
+account enabled → guild allowlist → channel|parent allowlist → DM policy. Bot outbound does
+**not** use the guild-user allowlist (the bot is the actor). Aliases are account-local only.
 
 **Conversation mode (Settings → Discord → General):**
 

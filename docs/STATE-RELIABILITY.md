@@ -62,6 +62,8 @@ Never permanently strand operations in `sending` after `recoverOnLoad()`.
 - **`enforce_nonce=true`** on FakeTransport Create Message path
 - Duplicate `operation_id` enqueue returns existing receipt (no second job)
 - Ambiguous timeout with `applyDespiteFailure` + nonce → retry returns same resource (no duplicate)
+- `operation_id` = plugin outbox durable identity — **not** a Discord HTTP `Idempotency-Key` header
+- Semantic service / tools accept optional `operation_id` (or derive) before enqueue; receipt omits tokens / raw ledger
 
 ### Multi-step outbound groups (IMPLEMENTED + TESTED)
 

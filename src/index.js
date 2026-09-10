@@ -24,6 +24,8 @@ import {
 import { createDiscordAccountsService } from './accounts-service.js'
 import { registerDiscordHttpRoutes } from './http-accounts.js'
 import { credentialSecretName } from './secret-ref.js'
+import { createSemanticDiscordService } from './semantic/service.js'
+import { registerDiscordTools } from './semantic/tools.js'
 
 export const name = 'dsh-piblox-discord'
 /** Bridge + credential plane (ADR-0012) — secrets required for token write/resolve.
@@ -88,6 +90,18 @@ export {
   invokeDiscordHttp,
   API_PREFIX as DISCORD_API_PREFIX,
 } from './http-accounts.js'
+export {
+  createSemanticDiscordService,
+  toSemanticReceipt,
+  registerDiscordTools,
+  buildDiscordToolDefinitions,
+  DISCORD_TOOL_RISK,
+  DISCORD_TOOL_NAME_MAP,
+  normalizeTargetInput,
+  normalizeProactiveTargets,
+  resolveSemanticTarget,
+  authorizeOutboundDelivery,
+} from './semantic/index.js'
 
 /**
  * Build plugin runtime without Cordis (tests / embedding).
@@ -180,6 +194,14 @@ export function createDiscordProvider(deps, config = {}) {
     logger: deps.logger,
   })
 
+  const semantic = createSemanticDiscordService({
+    getAccounts: () => liveConfig.accounts,
+    transport,
+    outbox,
+    observability: deps.observability,
+    logger: deps.logger,
+  })
+
   /** @type {any} */
   const api = {
     config: liveConfig,
@@ -190,6 +212,18 @@ export function createDiscordProvider(deps, config = {}) {
     inboundDedupe,
     accountsConfigStore,
     messages,
+    semantic,
+    // Convenience aliases on the Cordis service surface
+    guildList: (input) => semantic.guildList(input),
+    channelGet: (input) => semantic.channelGet(input),
+    channelList: (input) => semantic.channelList(input),
+    messageGet: (input) => semantic.messageGet(input),
+    messageHistory: (input) => semantic.messageHistory(input),
+    messageSend: (input) => semantic.messageSend(input),
+    messageReply: (input) => semantic.messageReply(input),
+    messageEdit: (input) => semantic.messageEdit(input),
+    threadCreate: (input) => semantic.threadCreate(input),
+    notify: (input) => semantic.notify(input),
     postLabInteractionSmoke: (input) => bridge.postLabInteractionSmoke(input),
   }
 
@@ -320,6 +354,71 @@ export function createDiscordProvider(deps, config = {}) {
           })
       }, 2500)
     }
+
+    // Optional LAB proactive / tool-path smokes (explicit env only — not product).
+    const proactiveAccount = process.env.DSH_PROACTIVE_SMOKE_ACCOUNT
+    const proactiveAlias = process.env.DSH_PROACTIVE_SMOKE_ALIAS
+    const proactiveContent = process.env.DSH_PROACTIVE_SMOKE_CONTENT || 'DSH_PROACTIVE_SERVICE_OK'
+    if (proactiveAccount && proactiveAlias) {
+      setTimeout(() => {
+        semantic
+          .notify({
+            accountId: String(proactiveAccount),
+            target: { alias: String(proactiveAlias) },
+            content: String(proactiveContent),
+            operationId: `lab:proactive:${proactiveAccount}:${proactiveAlias}`,
+            wait: true,
+          })
+          .then((r) => {
+            // eslint-disable-next-line no-console
+            console.info(
+              `discord LAB proactive: ok=${r.state} op=${r.operation_id} resource=${r.discord_resource_id || ''}`,
+            )
+          })
+          .catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn(`discord LAB proactive failed: ${err instanceof Error ? err.message : err}`)
+          })
+      }, 3500)
+    }
+
+    const toolSmokeContent = process.env.DSH_DISCORD_TOOL_SMOKE_CONTENT
+    const toolSmokeAccount = process.env.DSH_DISCORD_TOOL_SMOKE_ACCOUNT || proactiveAccount
+    const toolSmokeAlias = process.env.DSH_DISCORD_TOOL_SMOKE_ALIAS || proactiveAlias
+    if (toolSmokeContent && toolSmokeAccount && toolSmokeAlias) {
+      setTimeout(() => {
+        const args = {
+          account_id: String(toolSmokeAccount),
+          target: { alias: String(toolSmokeAlias) },
+          content: String(toolSmokeContent),
+          operation_id: `lab:tool-send:${toolSmokeAccount}:${Date.now()}`,
+        }
+        const tools = api._tools
+        // eslint-disable-next-line no-console
+        console.info(
+          `discord LAB tool smoke: tools_runtime=${Boolean(tools?.execute)} invoking discord_message_send args=${JSON.stringify({ account_id: args.account_id, target: args.target, content: args.content, operation_id: args.operation_id })}`,
+        )
+        const run = async () => {
+          if (!tools || typeof tools.execute !== 'function') {
+            throw new Error('tools runtime unavailable — cannot prove tools/pre-execute path')
+          }
+          const result = await tools.execute({
+            name: 'discord_message_send',
+            arguments: args,
+            callId: `lab-discord-tool-${Date.now()}`,
+          })
+          // eslint-disable-next-line no-console
+          console.info(
+            `discord LAB tool smoke: tools.execute done isError=${Boolean(result?.isError || result?.error)} content=${JSON.stringify(result?.content ?? result).slice(0, 400)}`,
+          )
+          return result
+        }
+        run().catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn(`discord LAB tool smoke failed: ${err instanceof Error ? err.message : err}`)
+        })
+      }, 5000)
+    }
   }
   api.stop = async function stop() {
     bridge.stop()
@@ -425,6 +524,30 @@ export function apply(ctx, config = {}) {
   ctx.provide('discord', provider)
   // Admin surface alias (not registered as model tools)
   ctx.provide('discordAccounts', provider.accounts)
+
+  // Model-facing tools — soft-inject tools (secrets cookbook). Default on when available.
+  const exposeTools = config.exposeTools !== false
+  if (exposeTools && typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['tools'], (tctx) => {
+        const toolsCtx = /** @type {any} */ (tctx)
+        provider._tools = toolsCtx.tools
+        registerDiscordTools(
+          {
+            tools: toolsCtx.tools,
+            effect: toolsCtx.effect?.bind(toolsCtx) || ctx.effect?.bind(ctx),
+            logger: ctx.logger,
+          },
+          provider.semantic,
+          { names: config.toolNames },
+        )
+      })
+    } catch (err) {
+      ctx.logger?.warn?.(
+        `dsh-piblox-discord: tools inject skipped — ${err instanceof Error ? err.message : err}`,
+      )
+    }
+  }
 
   if (typeof ctx.inject === 'function') {
     try {

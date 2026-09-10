@@ -387,6 +387,10 @@ window.__ModuleLoader__.load({
         sectionGuildUsers: "Guild users",
         sectionDm: "Direct messages",
         sectionBehavior: "Behavior",
+        sectionTargets: "Targets",
+        proactiveTargets: "Proactive target aliases",
+        proactiveTargetsHint:
+          "One alias per line: alias kind id [parent=<channel>] [guild=<guild>]. Kinds: channel | thread | dm. Account-local; no secrets.",
         advancedIntents: "Advanced intents",
         agentPreset: "Agent preset",
         agentPresetHint:
@@ -493,6 +497,68 @@ window.__ModuleLoader__.load({
 
     function listToLines(list) {
       return (list || []).join("\n");
+    }
+
+    /** Serialize proactiveTargets map → editor lines. */
+    function targetsToLines(map) {
+      const rows = [];
+      for (const [alias, t] of Object.entries(map || {})) {
+        if (!t || typeof t !== "object") continue;
+        const kind = String(t.kind || "channel");
+        const id = String(t.id || t.channelId || t.threadId || t.userId || "");
+        if (!alias || !id) continue;
+        let line = alias + " " + kind + " " + id;
+        if (t.parentChannelId) line += " parent=" + t.parentChannelId;
+        if (t.guildId) line += " guild=" + t.guildId;
+        rows.push(line);
+      }
+      return rows.join("\n");
+    }
+
+    /** Parse editor lines → proactiveTargets map (fail closed on bad rows). */
+    function linesToTargets(text) {
+      const out = {};
+      for (const raw of String(text || "").split("\n")) {
+        const line = raw.trim();
+        if (!line || line.startsWith("#")) continue;
+        const parts = line.split(/\s+/);
+        if (parts.length < 3) {
+          const err = new Error("Target line needs: alias kind id — got \"" + line.slice(0, 64) + "\"");
+          err.code = "targets";
+          throw err;
+        }
+        const alias = parts[0];
+        const kind = parts[1];
+        if (!/^[a-z][a-z0-9_]{0,47}$/.test(alias)) {
+          const err = new Error("Invalid target alias \"" + alias + "\"");
+          err.code = "targets";
+          throw err;
+        }
+        if (!["channel", "thread", "dm"].includes(kind)) {
+          const err = new Error("Invalid target kind \"" + kind + "\" (channel|thread|dm)");
+          err.code = "targets";
+          throw err;
+        }
+        const id = coerceSnowflake(parts[2]);
+        if (!id) {
+          const err = new Error("Invalid target id on line \"" + line.slice(0, 64) + "\"");
+          err.code = "targets";
+          throw err;
+        }
+        /** @type {Record<string, string>} */
+        const entry = { kind, id };
+        for (let i = 3; i < parts.length; i++) {
+          const kv = parts[i].split("=");
+          if (kv.length !== 2) continue;
+          const key = kv[0];
+          const val = coerceSnowflake(kv[1]);
+          if (!val) continue;
+          if (key === "parent") entry.parentChannelId = val;
+          if (key === "guild") entry.guildId = val;
+        }
+        out[alias] = entry;
+      }
+      return out;
     }
 
     function partitionIntents(intents) {
@@ -666,6 +732,9 @@ window.__ModuleLoader__.load({
           ? "thread_per_conversation"
           : "channel",
       );
+      const [targetsText, setTargetsText] = useState(
+        targetsToLines(initial && initial.proactiveTargets),
+      );
       const [intents, setIntents] = useState(
         new Set(
           (initial && initial.intents) ||
@@ -713,6 +782,7 @@ window.__ModuleLoader__.load({
               allowedUsers: !dmEnabled || allowAllDmUsers ? [] : linesToSnowflakes(dmUsers),
             },
             ignoreBots,
+            proactiveTargets: linesToTargets(targetsText),
           };
           if (isNew) {
             const id = accountId.trim();
@@ -1041,6 +1111,23 @@ window.__ModuleLoader__.load({
                     })
                   : null,
               ],
+            }),
+          }),
+
+          jsx(Section, {
+            title: t("sectionTargets"),
+            children: jsx(Field, {
+              id: baseId + "-targets",
+              label: t("proactiveTargets"),
+              hint: t("proactiveTargetsHint"),
+              children: jsx("textarea", {
+                id: baseId + "-targets",
+                value: targetsText,
+                onChange: (ev) => setTargetsText(ev.target.value),
+                rows: 3,
+                style: css.textarea,
+                placeholder: "notifications channel 123… guild=456…",
+              }),
             }),
           }),
 

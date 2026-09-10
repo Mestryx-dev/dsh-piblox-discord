@@ -191,7 +191,7 @@ describe('client module registration shape', () => {
     const src = readFileSync(new URL('../src/client/index.js', import.meta.url), 'utf8')
     assert.match(src, /settings\.section/)
     assert.match(src, /SECTION_ID = "discord"/)
-    assert.match(src, /sectionDm|sectionGuilds|sectionChannels/)
+    assert.match(src, /sectionDm|sectionGuilds|sectionChannels|sectionTargets/)
     assert.match(src, /allowAllUsers/)
     assert.match(src, /dmUsers|Allowed DM user/)
     assert.match(src, /emptyDenyAll|Empty list = deny all/)

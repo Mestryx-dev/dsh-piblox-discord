@@ -777,4 +777,139 @@ export class DiscordJsTransport {
       throw mapDiscordJsError(err)
     }
   }
+
+  /** @param {string} accountId */
+  async listGuilds(accountId) {
+    try {
+      const client = this._requireClient(accountId)
+      const guilds = [...(client.guilds?.cache?.values?.() || [])]
+      return guilds.map((g) => ({
+        id: String(g.id),
+        name: g.name != null ? String(g.name) : null,
+      }))
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} channelId
+   */
+  async getChannel(accountId, channelId) {
+    try {
+      const client = this._requireClient(accountId)
+      const channel = await client.channels.fetch(String(channelId))
+      if (!channel) throw new TransportError('unknown_target', `channel not found: ${channelId}`)
+      const isThread =
+        typeof channel.isThread === 'function' ? channel.isThread() : Boolean(channel.isThread)
+      return {
+        id: String(channel.id),
+        name: channel.name != null ? String(channel.name) : null,
+        type: channel.type != null ? Number(channel.type) : null,
+        guildId: channel.guildId != null ? String(channel.guildId) : undefined,
+        parentId: channel.parentId != null ? String(channel.parentId) : undefined,
+        isThread,
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} guildId
+   * @param {{ limit?: number }} [opts]
+   */
+  async listChannels(accountId, guildId, opts = {}) {
+    try {
+      const client = this._requireClient(accountId)
+      const guild = await client.guilds.fetch(String(guildId))
+      const limit = Math.min(Math.max(Number(opts.limit) || 50, 1), 100)
+      const channels = await guild.channels.fetch()
+      const out = []
+      for (const ch of channels.values()) {
+        if (!ch) continue
+        out.push({
+          id: String(ch.id),
+          name: ch.name != null ? String(ch.name) : null,
+          type: ch.type != null ? Number(ch.type) : null,
+          parentId: ch.parentId != null ? String(ch.parentId) : undefined,
+        })
+        if (out.length >= limit) break
+      }
+      return out
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} channelId
+   * @param {string} messageId
+   */
+  async getMessage(accountId, channelId, messageId) {
+    try {
+      const client = this._requireClient(accountId)
+      const channel = await client.channels.fetch(String(channelId))
+      if (!channel?.messages?.fetch) {
+        throw new TransportError('unknown_target', `channel not readable: ${channelId}`)
+      }
+      const msg = await channel.messages.fetch(String(messageId))
+      return {
+        id: String(msg.id),
+        channelId: String(channelId),
+        authorId: msg.author?.id != null ? String(msg.author.id) : undefined,
+        content: String(msg.content || '').slice(0, 2000),
+        timestamp: msg.createdAt?.toISOString?.() || null,
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} channelId
+   * @param {{ limit?: number, before?: string }} [opts]
+   */
+  async listMessages(accountId, channelId, opts = {}) {
+    try {
+      const client = this._requireClient(accountId)
+      const channel = await client.channels.fetch(String(channelId))
+      if (!channel?.messages?.fetch) {
+        throw new TransportError('unknown_target', `channel not readable: ${channelId}`)
+      }
+      const limit = Math.min(Math.max(Number(opts.limit) || 20, 1), 50)
+      const fetched = await channel.messages.fetch({
+        limit,
+        before: opts.before ? String(opts.before) : undefined,
+      })
+      return [...fetched.values()].map((msg) => ({
+        id: String(msg.id),
+        channelId: String(channelId),
+        authorId: msg.author?.id != null ? String(msg.author.id) : undefined,
+        content: String(msg.content || '').slice(0, 2000),
+        timestamp: msg.createdAt?.toISOString?.() || null,
+      }))
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} userId
+   */
+  async resolveDmChannel(accountId, userId) {
+    try {
+      const client = this._requireClient(accountId)
+      const user = await client.users.fetch(String(userId))
+      const dm = await user.createDM()
+      return String(dm.id)
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
 }
