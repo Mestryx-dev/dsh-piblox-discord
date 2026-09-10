@@ -303,7 +303,7 @@ Upstream analogue inject (OBSERVED webhook):
 | Concern | Evidence |
 |---|---|
 | Registration API | `ctx.tools.register(definition)` — **one-arg object** with mandatory `output: { schema, render }` (`@deepseek-ai/dsh-tools`) |
-| Inject | Soft `ctx.inject(['tools'], …)` (secrets pattern) |
+| Inject | Hard `inject: […, 'tools']` then `ctx.effect(() => ctx.tools.register(def))` (secrets cookbook — soft inject does not catalog tools) |
 | Schema | `name`, `description`, `parameters` (JSON Schema), `output`, `async execute` |
 | Tool ids | Underscore (`discord_message_send`); dotted `discord.*` via policy `tool_name_map` |
 | Policy path | Cordis waterfall **`tools/pre-execute`** — `dsh-policy-engine` + observability |

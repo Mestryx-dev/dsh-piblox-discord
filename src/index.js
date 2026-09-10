@@ -31,8 +31,17 @@ export const name = 'dsh-piblox-discord'
 /** Bridge + credential plane (ADR-0012) — secrets required for token write/resolve.
  * agentPresets required for new-session mint (webhook-parity); soft-get was silently
  * unavailable and failed closed before dedupe claim with no stdout evidence.
+ * tools hard-injected so model-facing discord_* register into the global catalog
+ * (OBSERVED secrets cookbook — soft inject never catalogs tools).
  */
-export const inject = ['conversationBinding', 'agents', 'secrets', 'agentPresets', 'agentDefaultModel']
+export const inject = [
+  'conversationBinding',
+  'agents',
+  'secrets',
+  'agentPresets',
+  'agentDefaultModel',
+  'tools',
+]
 
 export { FakeTransport, TransportError } from './transport/fake.js'
 export { DiscordJsTransport, normalizeMessageCreate, toDiscordMessageBody, LIVE_SMOKE_INTENT_IDS, resolveGatewayIntents } from './transport/discordjs.js'
@@ -553,39 +562,30 @@ export function apply(ctx, config = {}) {
   // Admin surface alias (not registered as model tools)
   ctx.provide('discordAccounts', provider.accounts)
 
-  // Model-facing tools — soft-inject tools (secrets cookbook). Default on when available.
+  // Model-facing tools — hard-injected `tools` (secrets cookbook). Default on.
   const exposeTools = config.exposeTools !== false
-  if (exposeTools && typeof ctx.inject === 'function') {
-    try {
-      ctx.inject(['tools'], (tctx) => {
-        const toolsCtx = /** @type {any} */ (tctx)
-        provider._tools = toolsCtx.tools
-        registerDiscordTools(
-          {
-            tools: toolsCtx.tools,
-            effect: typeof toolsCtx.effect === 'function' ? toolsCtx.effect.bind(toolsCtx) : undefined,
-            logger: toolsCtx.logger || ctx.logger,
-          },
-          provider.semantic,
-          { names: config.toolNames },
-        )
-      })
-    } catch (err) {
-      ctx.logger?.warn?.(
-        `dsh-piblox-discord: tools inject skipped — ${err instanceof Error ? err.message : err}`,
-      )
-    }
+  if (exposeTools && ctx.tools) {
+    provider._tools = ctx.tools
+    registerDiscordTools(
+      {
+        tools: ctx.tools,
+        effect: typeof ctx.effect === 'function' ? ctx.effect.bind(ctx) : undefined,
+        logger: ctx.logger,
+      },
+      provider.semantic,
+      { names: config.toolNames },
+    )
   }
 
   // Soft-capture policy for LAB tool smoke classification logs.
-  if (typeof ctx.inject === 'function') {
+  if (typeof ctx.get === 'function') {
     try {
-      ctx.inject(['policy'], (pctx) => {
-        provider._policy = /** @type {any} */ (pctx).policy
-      })
+      provider._policy = ctx.get('policy') || ctx.policy
     } catch {
       /* optional */
     }
+  } else if (ctx.policy) {
+    provider._policy = ctx.policy
   }
 
   if (typeof ctx.inject === 'function') {

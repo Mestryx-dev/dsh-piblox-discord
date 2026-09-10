@@ -32,7 +32,7 @@ No direct REST from tool wrappers. No token arguments. No Vega-specific tool bra
 ## Registration (OBSERVED DSH contract)
 
 - Package: `@deepseek-ai/dsh-tools` — **one-arg** `register(definition)` with mandatory `output: { schema, render }`
-- Soft-inject `tools` when `exposeTools !== false` (default)
+- Hard-inject `tools` (secrets cookbook) when registering model tools; `exposeTools !== false` (default)
 - Tool **ids use underscores** (`discord_message_send`) for policy/Vega id compatibility  
   Conceptual namespace `discord.*` maps via `tool_name_map` (e.g. `discord.message.send` → `discord_message_send`)
 
