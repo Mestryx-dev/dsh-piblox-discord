@@ -327,10 +327,14 @@ export function createDiscordProvider(deps, config = {}) {
       await startConfiguredAccount(accountId, account)
     }
 
+    // Optional one-shot LAB smokes — live Gateway only (never FakeTransport / unit tests).
+    const labLiveSmoke =
+      liveConfig.transport === 'discordjs' && Boolean(transport.allowConnect)
+
     // Optional one-shot LAB interaction smoke (Components V2 Button+Select). Not product UI.
     const smokeAccount = process.env.DSH_INTERACTION_SMOKE_ACCOUNT
     const smokeChannel = process.env.DSH_INTERACTION_SMOKE_CHANNEL
-    if (smokeAccount && smokeChannel) {
+    if (labLiveSmoke && smokeAccount && smokeChannel) {
       setTimeout(() => {
         bridge
           .postLabInteractionSmoke({
@@ -359,7 +363,7 @@ export function createDiscordProvider(deps, config = {}) {
     const proactiveAccount = process.env.DSH_PROACTIVE_SMOKE_ACCOUNT
     const proactiveAlias = process.env.DSH_PROACTIVE_SMOKE_ALIAS
     const proactiveContent = process.env.DSH_PROACTIVE_SMOKE_CONTENT || 'DSH_PROACTIVE_SERVICE_OK'
-    if (proactiveAccount && proactiveAlias) {
+    if (labLiveSmoke && proactiveAccount && proactiveAlias) {
       setTimeout(() => {
         semantic
           .notify({
@@ -385,7 +389,7 @@ export function createDiscordProvider(deps, config = {}) {
     const toolSmokeContent = process.env.DSH_DISCORD_TOOL_SMOKE_CONTENT
     const toolSmokeAccount = process.env.DSH_DISCORD_TOOL_SMOKE_ACCOUNT || proactiveAccount
     const toolSmokeAlias = process.env.DSH_DISCORD_TOOL_SMOKE_ALIAS || proactiveAlias
-    if (toolSmokeContent && toolSmokeAccount && toolSmokeAlias) {
+    if (labLiveSmoke && toolSmokeContent && toolSmokeAccount && toolSmokeAlias) {
       setTimeout(() => {
         const args = {
           account_id: String(toolSmokeAccount),
@@ -406,6 +410,7 @@ export function createDiscordProvider(deps, config = {}) {
             name: 'discord_message_send',
             arguments: args,
             callId: `lab-discord-tool-${Date.now()}`,
+            signal: AbortSignal.timeout(120_000),
           })
           // eslint-disable-next-line no-console
           console.info(

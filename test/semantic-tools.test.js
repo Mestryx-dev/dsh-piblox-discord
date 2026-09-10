@@ -408,4 +408,26 @@ describe('outbound authorize helpers', () => {
     assert.equal(auth.ok, false)
     assert.equal(auth.reason, 'thread_parent_unknown')
   })
+
+  it('guild channel category parentId does not imply thread allowlist', async () => {
+    const account = openAccount()
+    const auth = await authorizeOutboundDelivery(
+      account,
+      { kind: 'channel', channelId: CHANNEL, guildId: GUILD },
+      {
+        accountId: 'lab',
+        transport: {
+          async getChannel() {
+            return {
+              id: CHANNEL,
+              guildId: GUILD,
+              parentId: 'category-not-allowlisted',
+              isThread: false,
+            }
+          },
+        },
+      },
+    )
+    assert.equal(auth.ok, true)
+  })
 })

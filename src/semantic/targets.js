@@ -209,19 +209,23 @@ export async function authorizeOutboundDelivery(account, resolved, opts = {}) {
 
   let guildId = resolved.guildId
   let parentChannelId = resolved.parentChannelId
+  /** Category parentId on guild channels must NOT imply thread allowlist. */
+  let isThread = resolved.kind === 'thread'
 
   if (opts.transport?.getChannel) {
     try {
       const meta = await opts.transport.getChannel(opts.accountId, resolved.channelId)
-      if (meta?.parentId && !parentChannelId) parentChannelId = String(meta.parentId)
+      if (meta?.isThread) {
+        isThread = true
+        if (meta?.parentId && !parentChannelId) parentChannelId = String(meta.parentId)
+      }
       if (meta?.guildId && !guildId) guildId = String(meta.guildId)
     } catch {
-      /* ignore */
+      /* ignore — fail closed below if ids missing */
     }
   }
 
-  const inThread = resolved.kind === 'thread' || Boolean(parentChannelId)
-  if (inThread && !parentChannelId && !account.allowAllChannels) {
+  if (isThread && !parentChannelId && !account.allowAllChannels) {
     return { ok: false, reason: 'thread_parent_unknown' }
   }
 
@@ -232,7 +236,7 @@ export async function authorizeOutboundDelivery(account, resolved, opts = {}) {
     }
   }
 
-  const channelKey = inThread ? parentChannelId : resolved.channelId
+  const channelKey = isThread ? parentChannelId : resolved.channelId
   if (!account.allowAllChannels) {
     if (!account.allowedChannels.length) return { ok: false, reason: 'channels_deny_all' }
     if (!channelKey || !account.allowedChannels.includes(String(channelKey))) {
