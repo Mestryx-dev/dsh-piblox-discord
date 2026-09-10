@@ -4,8 +4,11 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { defaultAllowedMentions } from '../components/encode.js'
 import { toReceipt } from '../outbox/types.js'
+import { materializeAttachments } from '../attachments.js'
 import {
   normalizeTargetInput,
   resolveSemanticTarget,
@@ -49,10 +52,20 @@ export function toSemanticReceipt(receipt) {
  *   outbox: any,
  *   observability?: any,
  *   logger?: any,
+ *   attachmentRoot?: string,
+ *   attachmentStagingRoot?: string,
  * }} deps
  */
 export function createSemanticDiscordService(deps) {
   const { getAccounts, transport, outbox, observability, logger } = deps
+  const attachmentRoot =
+    deps.attachmentRoot ||
+    process.env.DSH_DISCORD_ATTACH_DIR ||
+    join(process.env.DSH_HOME || join(homedir(), 'dsh-lab', 'runtime', 'dsh-home'), 'attachments-out')
+  const attachmentStagingRoot =
+    deps.attachmentStagingRoot ||
+    outbox?.attachmentStagingRoot ||
+    join(process.env.DSH_HOME || join(homedir(), 'dsh-lab', 'runtime', 'dsh-home'), 'ledger', 'discord-attachment-staging')
 
   function requireAccount(accountId) {
     const id = String(accountId || '').trim()
@@ -217,6 +230,8 @@ export function createSemanticDiscordService(deps) {
           guild_id: ch.guildId != null ? String(ch.guildId) : null,
           parent_id: ch.parentId != null ? String(ch.parentId) : null,
           is_thread: Boolean(ch.isThread),
+          archived: Boolean(ch.archived),
+          locked: Boolean(ch.locked),
         },
       }
     },
@@ -346,6 +361,12 @@ export function createSemanticDiscordService(deps) {
         }
         channelId = await transport.resolveDmChannel(accountId, resolved.target.userId)
       }
+      const operationId = String(input.operationId || `discord:sendMessage:${randomUUID()}`)
+      const attachments = materializeAttachments(input.attachments || [], {
+        attachmentRoot,
+        stagingRoot: attachmentStagingRoot,
+        operationId,
+      })
       return enqueueMutation({
         accountId,
         operationType: 'sendMessage',
@@ -355,8 +376,9 @@ export function createSemanticDiscordService(deps) {
           components: input.components,
           componentsV2: input.componentsV2,
           allowedMentions: defaultAllowedMentions(),
+          attachments: attachments.length ? attachments : undefined,
         },
-        operationId: input.operationId,
+        operationId,
         correlationId: input.correlationId,
         useNonce: true,
         wait: Boolean(input.wait),
@@ -486,6 +508,71 @@ export function createSemanticDiscordService(deps) {
           components: input.components,
           componentsV2: input.componentsV2,
           allowedMentions: defaultAllowedMentions(),
+        },
+        operationId: input.operationId,
+        correlationId: input.correlationId,
+        useNonce: false,
+        wait: Boolean(input.wait),
+      })
+    },
+
+    /**
+     * Delete a Discord message via outbox.
+     * Model path defaults to bot-owned only (`requireBotOwned: true`).
+     * Trusted plugins may set requireBotOwned=false (Discord still enforces perms).
+     *
+     * @param {{
+     *   accountId: string,
+     *   channelId: string,
+     *   messageId: string,
+     *   requireBotOwned?: boolean,
+     *   operationId?: string,
+     *   correlationId?: string,
+     *   wait?: boolean,
+     * }} input
+     */
+    async messageDelete(input) {
+      const { accountId, account } = requireAccount(input.accountId)
+      const channelId = String(input.channelId || '')
+      const messageId = String(input.messageId || '')
+      if (!channelId || !messageId) {
+        throw Object.assign(new Error('channel_id and message_id required'), {
+          code: 'invalid_payload',
+        })
+      }
+      if (!transport.isAccountRunning?.(accountId)) {
+        throw Object.assign(new Error('account not running'), { code: 'account_stopped' })
+      }
+      const meta =
+        typeof transport.getChannel === 'function'
+          ? await transport.getChannel(accountId, channelId).catch(() => null)
+          : null
+      const auth = await authorizeOutboundDelivery(
+        account,
+        meta?.isThread || meta?.parentId
+          ? {
+              kind: 'thread',
+              channelId,
+              threadId: channelId,
+              parentChannelId: meta.parentId != null ? String(meta.parentId) : undefined,
+              guildId: meta.guildId != null ? String(meta.guildId) : undefined,
+            }
+          : {
+              kind: 'channel',
+              channelId,
+              guildId: meta?.guildId != null ? String(meta.guildId) : undefined,
+            },
+        { transport, accountId },
+      )
+      if (!auth.ok) {
+        throw Object.assign(new Error(`target denied: ${auth.reason}`), { code: auth.reason })
+      }
+      return enqueueMutation({
+        accountId,
+        operationType: 'deleteMessage',
+        target: { channelId, messageId },
+        payload: {
+          requireBotOwned: input.requireBotOwned !== false,
         },
         operationId: input.operationId,
         correlationId: input.correlationId,

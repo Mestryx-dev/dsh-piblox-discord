@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { buildBindingIdentity, toExternalIdentity } from './binding.js'
-import { authorizeInbound } from './config.js'
+import { authorizeInbound, authorizeInboundChannelOnly } from './config.js'
 import { buildFollowupMessage } from './message-source.js'
 import { inboundEventKey } from './inbound-dedupe.js'
 import { threadNameFromContent, DEFAULT_THREAD_NAME } from './thread-name.js'
@@ -346,6 +346,17 @@ export class DiscordSessionBridge {
       return this._handleInteraction(event)
     }
 
+    if (
+      event.type === 'discord.message.updated' ||
+      event.type === 'discord.message.deleted'
+    ) {
+      return this._handleMessageLifecycle(event)
+    }
+
+    if (event.type === 'discord.thread.updated') {
+      return this._handleThreadUpdated(event)
+    }
+
     if (event.type !== 'discord.message.created') {
       this.logger?.debug?.(`ignore event type ${event.type}`)
       return { ok: false, reason: 'unsupported_event' }
@@ -610,6 +621,160 @@ export class DiscordSessionBridge {
     if (!this.sessionCwd) return false
     const cwd = agent?.session?.header?.cwd
     return cwd == null || String(cwd).trim() === ''
+  }
+
+  /**
+   * MESSAGE_UPDATE / MESSAGE_DELETE — normalize + authorize + dedupe + obs only.
+   * Does NOT mutate AgentLoop transcript (no canonical DSH edit/delete-turn seam).
+   * @param {import('./types.js').PlatformMessageEvent} event
+   */
+  async _handleMessageLifecycle(event) {
+    const account = this.accounts[event.accountId]
+    if (!account) return { ok: false, reason: 'unknown_account' }
+    if (!this.transport.isAccountRunning(event.accountId)) {
+      return { ok: false, reason: 'account_stopped' }
+    }
+    if (!event.messageId || !event.channelId) {
+      return { ok: false, reason: 'malformed_event' }
+    }
+
+    // Channel/guild scope first. Uncached deletes may lack userId — skip user gate then.
+    const auth = event.userId
+      ? authorizeInbound(account, event)
+      : authorizeInboundChannelOnly(account, event)
+    if (!auth.ok) {
+      return { ok: false, reason: auth.reason }
+    }
+
+    if (account.ignoreBots !== false && event.isBot) {
+      return { ok: false, reason: 'ignored_bot' }
+    }
+
+    const eventId = String(event.eventId || `${event.type}:${event.messageId}`)
+    if (this.inboundDedupe) {
+      const claimed = await this.inboundDedupe.claim({
+        accountId: event.accountId,
+        eventId,
+        eventType: event.type,
+      })
+      if (!claimed.ok) {
+        return { ok: false, reason: 'duplicate', claim: claimed.claim }
+      }
+      if (typeof this.inboundDedupe.markCompleted === 'function') {
+        try {
+          await this.inboundDedupe.markCompleted(event.accountId, eventId)
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    const correlationId = randomUUID()
+    if (this.observability?.emit) {
+      try {
+        this.observability.emit('request.received', {
+          correlation_id: correlationId,
+          provider: 'discord',
+          account_id: event.accountId,
+          event_id: event.eventId,
+          message_id: event.messageId,
+          channel_id: event.channelId,
+          event_type: event.type,
+          partial: Boolean(event.partial),
+          transcript_mutation: 'out_of_scope',
+        })
+      } catch {
+        /* closed EVENT_TYPES */
+      }
+    }
+
+    this.logger?.info?.(
+      `discord lifecycle ${event.type} account=${event.accountId} msg=${event.messageId} channel=${event.channelId} partial=${Boolean(event.partial)} (no transcript mutation)`,
+    )
+    return {
+      ok: true,
+      reason: 'lifecycle_emitted',
+      transcript_mutation: 'out_of_scope',
+      correlationId,
+      eventType: event.type,
+    }
+  }
+
+  /**
+   * Thread archive/lock updates — binding/session MUST survive.
+   * @param {import('./types.js').PlatformThreadEvent} event
+   */
+  async _handleThreadUpdated(event) {
+    const account = this.accounts[event.accountId]
+    if (!account) return { ok: false, reason: 'unknown_account' }
+
+    // Resolve existing binding by thread id — do not delete it on archive.
+    let sessionId = null
+    let bindingPreserved = false
+    try {
+      const identity = buildBindingIdentity(event.accountId, {
+        channelId: event.parentChannelId || event.channelId,
+        threadId: event.threadId || event.channelId,
+        userId: 'system',
+        isDm: false,
+      })
+      const external = toExternalIdentity(identity)
+      const existing =
+        typeof this.conversationBinding.resolve === 'function'
+          ? this.conversationBinding.resolve(external)
+          : null
+      if (existing?.session_id) {
+        sessionId = existing.session_id
+        bindingPreserved = true
+      }
+    } catch {
+      /* ignore */
+    }
+
+    if (this.inboundDedupe) {
+      const claimed = await this.inboundDedupe.claim({
+        accountId: event.accountId,
+        eventId: event.eventId,
+        eventType: event.type,
+      })
+      if (!claimed.ok) {
+        return { ok: false, reason: 'duplicate', bindingPreserved, sessionId }
+      }
+      if (typeof this.inboundDedupe.markCompleted === 'function') {
+        try {
+          await this.inboundDedupe.markCompleted(event.accountId, String(event.eventId))
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    if (this.observability?.emit) {
+      try {
+        this.observability.emit('request.received', {
+          correlation_id: randomUUID(),
+          provider: 'discord',
+          account_id: event.accountId,
+          event_id: event.eventId,
+          thread_id: event.threadId,
+          archived: Boolean(event.archived),
+          locked: Boolean(event.locked),
+          session_id: sessionId,
+          binding_preserved: bindingPreserved,
+        })
+      } catch {
+        /* closed */
+      }
+    }
+
+    return {
+      ok: true,
+      reason: 'thread_state_observed',
+      archived: Boolean(event.archived),
+      locked: Boolean(event.locked),
+      bindingPreserved,
+      sessionId,
+    }
   }
 
   /**

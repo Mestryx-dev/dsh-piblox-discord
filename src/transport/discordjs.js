@@ -88,6 +88,120 @@ export function normalizeMessageCreate(accountId, message) {
 }
 
 /**
+ * Normalize MESSAGE_UPDATE. Partial/uncached payloads are marked `partial: true`
+ * and may have empty content / unknown author — consumers must not assume completeness.
+ * @param {string} accountId
+ * @param {any} message
+ * @param {any} [_oldMessage]
+ * @returns {import('../types.js').PlatformMessageEvent}
+ */
+export function normalizeMessageUpdate(accountId, message, _oldMessage) {
+  const channel = message?.channel
+  const isDm = Boolean(channel?.isDMBased?.() === true)
+  const isThread =
+    typeof channel?.isThread === 'function'
+      ? Boolean(channel.isThread())
+      : Boolean(channel?.isThread)
+  const threadId = isThread ? String(message.channelId) : undefined
+  const parentChannelId =
+    isThread && channel?.parentId != null
+      ? String(channel.parentId)
+      : undefined
+  const partial = Boolean(message?.partial) || message?.author == null
+  const editedTs =
+    message?.editedTimestamp != null
+      ? String(message.editedTimestamp)
+      : message?.editedAt?.getTime?.() != null
+        ? String(message.editedAt.getTime())
+        : 'unknown'
+  return {
+    type: 'discord.message.updated',
+    accountId: String(accountId),
+    eventId: `update:${message?.id || ''}:${editedTs}`,
+    messageId: String(message?.id || ''),
+    guildId: message?.guildId != null ? String(message.guildId) : undefined,
+    channelId: String(message?.channelId || ''),
+    threadId,
+    parentChannelId,
+    userId: message?.author?.id != null ? String(message.author.id) : '',
+    content: message?.content != null ? String(message.content) : '',
+    isBot: Boolean(message?.author?.bot),
+    isDm,
+    partial,
+    raw: {
+      partial,
+      edited_timestamp: message?.editedAt?.toISOString?.() || null,
+      author_present: Boolean(message?.author),
+    },
+  }
+}
+
+/**
+ * Normalize MESSAGE_DELETE (may be uncached — only ids).
+ * @param {string} accountId
+ * @param {any} payload  discord.js Message | PartialMessage | { id, channelId, guildId }
+ * @returns {import('../types.js').PlatformMessageEvent}
+ */
+export function normalizeMessageDelete(accountId, payload) {
+  const channel = payload?.channel
+  const isDm = Boolean(channel?.isDMBased?.() === true)
+  const isThread =
+    typeof channel?.isThread === 'function'
+      ? Boolean(channel.isThread())
+      : Boolean(channel?.isThread)
+  const channelId = String(payload?.channelId || channel?.id || '')
+  const messageId = String(payload?.id || '')
+  return {
+    type: 'discord.message.deleted',
+    accountId: String(accountId),
+    eventId: `delete:${messageId}`,
+    messageId,
+    guildId: payload?.guildId != null ? String(payload.guildId) : undefined,
+    channelId,
+    threadId: isThread ? channelId : undefined,
+    parentChannelId: isThread && channel?.parentId != null ? String(channel.parentId) : undefined,
+    userId: payload?.author?.id != null ? String(payload.author.id) : '',
+    content: '',
+    isBot: Boolean(payload?.author?.bot),
+    isDm,
+    partial: Boolean(payload?.partial) || payload?.author == null,
+    raw: {
+      uncached: payload?.author == null,
+    },
+  }
+}
+
+/**
+ * Normalize threadUpdate — archive/lock state only (bindings must survive).
+ * @param {string} accountId
+ * @param {any} _oldThread
+ * @param {any} newThread
+ * @returns {import('../types.js').PlatformThreadEvent}
+ */
+export function normalizeThreadUpdate(accountId, _oldThread, newThread) {
+  const threadId = String(newThread?.id || '')
+  const archived = Boolean(newThread?.archived)
+  const locked = Boolean(newThread?.locked)
+  return {
+    type: 'discord.thread.updated',
+    accountId: String(accountId),
+    eventId: `thread:${threadId}:${archived ? 'a' : 'u'}:${locked ? 'l' : 'o'}:${newThread?.archiveTimestamp || newThread?.updatedTimestamp || Date.now()}`,
+    guildId: newThread?.guildId != null ? String(newThread.guildId) : undefined,
+    channelId: threadId,
+    threadId,
+    parentChannelId: newThread?.parentId != null ? String(newThread.parentId) : undefined,
+    archived,
+    locked,
+    name: newThread?.name != null ? String(newThread.name) : null,
+    raw: {
+      archived,
+      locked,
+      auto_archive_duration: newThread?.autoArchiveDuration ?? null,
+    },
+  }
+}
+
+/**
  * Build REST create/edit body from OutboundMessage (nonce / enforce_nonce preserved).
  * Components encode from ComponentNode tree (Components V2 when applicable).
  * @param {OutboundMessage} payload
@@ -122,6 +236,13 @@ export function toDiscordMessageBody(payload) {
   }
   if (payload?.replyTo) {
     body.reply = { messageReference: String(payload.replyTo), failIfNotExists: false }
+  }
+  if (Array.isArray(payload?.files) && payload.files.length) {
+    body.files = payload.files.map((f) => ({
+      attachment: f.data,
+      name: String(f.name || 'file'),
+      contentType: f.contentType,
+    }))
   }
   return body
 }
@@ -378,6 +499,22 @@ export class DiscordJsTransport {
       void this._dispatchMessageCreate(accountId, message)
     })
 
+    client.on?.('messageUpdate', (oldMessage, newMessage) => {
+      void this._dispatchNormalized(accountId, () =>
+        normalizeMessageUpdate(accountId, newMessage, oldMessage),
+      )
+    })
+
+    client.on?.('messageDelete', (message) => {
+      void this._dispatchNormalized(accountId, () => normalizeMessageDelete(accountId, message))
+    })
+
+    client.on?.('threadUpdate', (oldThread, newThread) => {
+      void this._dispatchNormalized(accountId, () =>
+        normalizeThreadUpdate(accountId, oldThread, newThread),
+      )
+    })
+
     client.on?.('interactionCreate', (interaction) => {
       void this._dispatchInteractionCreate(accountId, interaction)
     })
@@ -391,6 +528,31 @@ export class DiscordJsTransport {
         `discordjs: raw MESSAGE_CREATE account=${accountId} id=${d.id || ''} channel=${d.channel_id || ''} guild=${d.guild_id || ''} author=${d.author?.id || ''} handlers=${this.handlers.length}`,
       )
     })
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {() => import('../types.js').PlatformEvent} normalize
+   */
+  async _dispatchNormalized(accountId, normalize) {
+    let event
+    try {
+      event = normalize()
+    } catch (err) {
+      this.logger?.warn?.(
+        `discordjs: normalize failed account=${accountId} err=${err instanceof Error ? err.message : err}`,
+      )
+      return
+    }
+    for (const handler of [...this.handlers]) {
+      try {
+        await handler(event)
+      } catch (err) {
+        this.logger?.warn?.(
+          `discordjs: inbound handler error account=${accountId} type=${event?.type || ''} err=${err instanceof Error ? err.message : err}`,
+        )
+      }
+    }
   }
 
   /**
@@ -636,6 +798,9 @@ export class DiscordJsTransport {
       if (!channel || typeof channel.send !== 'function') {
         throw new TransportError('unknown_target', `channel not sendable: ${channelId}`)
       }
+      if (typeof channel.isThread === 'function' && channel.isThread() && channel.archived) {
+        throw new TransportError('permission', `thread archived: ${channelId}`)
+      }
       const body = toDiscordMessageBody(payload)
       const sent = await channel.send(body)
       return {
@@ -675,6 +840,9 @@ export class DiscordJsTransport {
       if (!channel || typeof channel.messages?.fetch !== 'function') {
         throw new TransportError('unknown_target', `channel not editable: ${channelId}`)
       }
+      if (typeof channel.isThread === 'function' && channel.isThread() && channel.archived) {
+        throw new TransportError('permission', `thread archived: ${channelId}`)
+      }
       const msg = await channel.messages.fetch(String(messageId))
       const body = toDiscordMessageBody(payload)
       delete body.nonce
@@ -686,6 +854,45 @@ export class DiscordJsTransport {
         channelId: String(channelId),
         messageId: String(edited.id),
         guildId: edited.guildId != null ? String(edited.guildId) : undefined,
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * Delete a message. Default requireBotOwned=true refuses foreign messages
+   * without attempting Manage Messages (model-safe). Trusted callers may set
+   * requireBotOwned=false to let Discord enforce permissions.
+   *
+   * @param {string} accountId
+   * @param {string} channelId
+   * @param {string} messageId
+   * @param {{ requireBotOwned?: boolean }} [opts]
+   */
+  async deleteMessage(accountId, channelId, messageId, opts = {}) {
+    try {
+      const client = this._requireClient(accountId)
+      const channel = await client.channels.fetch(String(channelId))
+      if (!channel || typeof channel.messages?.fetch !== 'function') {
+        throw new TransportError('unknown_target', `channel not found: ${channelId}`)
+      }
+      if (typeof channel.isThread === 'function' && channel.isThread() && channel.archived) {
+        throw new TransportError('permission', `thread archived: ${channelId}`)
+      }
+      const msg = await channel.messages.fetch(String(messageId))
+      const requireBotOwned = opts.requireBotOwned !== false
+      const botId = client.user?.id != null ? String(client.user.id) : ''
+      const authorId = msg.author?.id != null ? String(msg.author.id) : ''
+      if (requireBotOwned && botId && authorId && authorId !== botId) {
+        throw new TransportError('permission', 'foreign_message: refuse delete of non-bot-owned message')
+      }
+      await msg.delete()
+      return {
+        accountId,
+        channelId: String(channelId),
+        messageId: String(messageId),
+        guildId: msg.guildId != null ? String(msg.guildId) : undefined,
       }
     } catch (err) {
       throw mapDiscordJsError(err)
@@ -810,6 +1017,8 @@ export class DiscordJsTransport {
         guildId: channel.guildId != null ? String(channel.guildId) : undefined,
         parentId: channel.parentId != null ? String(channel.parentId) : undefined,
         isThread,
+        archived: isThread ? Boolean(channel.archived) : false,
+        locked: isThread ? Boolean(channel.locked) : false,
       }
     } catch (err) {
       throw mapDiscordJsError(err)

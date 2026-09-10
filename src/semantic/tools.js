@@ -147,7 +147,7 @@ export function buildDiscordToolDefinitions(service) {
     {
       name: 'discord_message_send',
       description:
-        'Send a Discord message via DeliveryOutbox (content and/or Components V2). Requires account_id + target. Optional operation_id for idempotency (maps to Discord nonce, not HTTP Idempotency-Key).',
+        'Send a Discord message via DeliveryOutbox (content and/or Components V2 and/or attachments). Requires account_id + target. Attachments: workspace-relative paths only (no absolute / ..). Optional operation_id for idempotency (maps to Discord nonce, not HTTP Idempotency-Key).',
       parameters: {
         type: 'object',
         properties: {
@@ -155,6 +155,12 @@ export function buildDiscordToolDefinitions(service) {
           target: TARGET_PARAM,
           content: { type: 'string' },
           components: { type: 'array', items: { type: 'object', additionalProperties: true } },
+          attachments: {
+            type: 'array',
+            description:
+              'Optional files: [{ path: "relative/to/attach-root.txt" }] or [{ text, filename }]. No absolute paths.',
+            items: { type: 'object', additionalProperties: true },
+          },
           operation_id: { type: 'string' },
           correlation_id: { type: 'string' },
         },
@@ -168,6 +174,7 @@ export function buildDiscordToolDefinitions(service) {
           target: args.target,
           content: args.content,
           components: args.components,
+          attachments: args.attachments,
           operationId: args.operation_id,
           correlationId: args.correlation_id,
           wait: true,
@@ -230,6 +237,35 @@ export function buildDiscordToolDefinitions(service) {
           messageId: args.message_id,
           content: args.content,
           components: args.components,
+          operationId: args.operation_id,
+          correlationId: args.correlation_id,
+          wait: true,
+        })
+      },
+    },
+    {
+      name: 'discord_message_delete',
+      description:
+        'Delete a bot-owned Discord message via DeliveryOutbox. Refuses foreign (non-bot) messages. Requires account_id + channel_id + message_id.',
+      parameters: {
+        type: 'object',
+        properties: {
+          account_id: { type: 'string' },
+          channel_id: { type: 'string' },
+          message_id: { type: 'string' },
+          operation_id: { type: 'string' },
+          correlation_id: { type: 'string' },
+        },
+        required: ['account_id', 'channel_id', 'message_id'],
+        additionalProperties: false,
+      },
+      output: { schema: RECEIPT_SCHEMA, render: jsonOutput().render },
+      async execute(args) {
+        return service.messageDelete({
+          accountId: args.account_id,
+          channelId: args.channel_id,
+          messageId: args.message_id,
+          requireBotOwned: true,
           operationId: args.operation_id,
           correlationId: args.correlation_id,
           wait: true,
@@ -307,6 +343,7 @@ export const DISCORD_TOOL_RISK = Object.freeze({
   discord_message_send: 'L2',
   discord_message_reply: 'L2',
   discord_message_edit: 'L2',
+  discord_message_delete: 'L2',
   discord_thread_create: 'L2',
 })
 
@@ -320,5 +357,6 @@ export const DISCORD_TOOL_NAME_MAP = Object.freeze({
   'discord.message.send': 'discord_message_send',
   'discord.message.reply': 'discord_message_reply',
   'discord.message.edit': 'discord_message_edit',
+  'discord.message.delete': 'discord_message_delete',
   'discord.thread.create': 'discord_thread_create',
 })

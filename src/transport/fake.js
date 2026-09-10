@@ -280,6 +280,16 @@ export class FakeTransport {
         channelId,
       })
     }
+    if (!this._messages) this._messages = new Map()
+    if (op === 'send' || op === 'reply' || op === 'edit') {
+      this._messages.set(`${channelId}:${sent.messageId}`, {
+        id: sent.messageId,
+        channelId: String(channelId),
+        authorId: 'bot',
+        content: String(payload.content || ''),
+        files: Array.isArray(payload.files) ? payload.files.length : 0,
+      })
+    }
     return sent
   }
 
@@ -296,6 +306,37 @@ export class FakeTransport {
   /** @type {DiscordTransport['editMessage']} */
   editMessage(accountId, channelId, messageId, payload) {
     return this._outbound(accountId, channelId, payload, 'edit', messageId)
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} channelId
+   * @param {string} messageId
+   * @param {{ requireBotOwned?: boolean }} [opts]
+   */
+  async deleteMessage(accountId, channelId, messageId, opts = {}) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    const fail = this._takeFailure(accountId)
+    if (fail) this._throwFailure(fail)
+    if (!this._messages) this._messages = new Map()
+    const key = `${channelId}:${messageId}`
+    const existing = this._messages.get(key)
+    const requireBotOwned = opts.requireBotOwned !== false
+    if (requireBotOwned && existing?.authorId && existing.authorId !== 'bot') {
+      throw new TransportError('permission', 'foreign_message: refuse delete of non-bot-owned message')
+    }
+    this._messages.delete(key)
+    const sent = {
+      accountId,
+      channelId: String(channelId),
+      messageId: String(messageId),
+      op: 'deleteMessage',
+      payload: { requireBotOwned },
+    }
+    this.outbound.push(sent)
+    return sent
   }
 
   /**

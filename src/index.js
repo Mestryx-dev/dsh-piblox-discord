@@ -44,7 +44,7 @@ export const inject = [
 ]
 
 export { FakeTransport, TransportError } from './transport/fake.js'
-export { DiscordJsTransport, normalizeMessageCreate, toDiscordMessageBody, LIVE_SMOKE_INTENT_IDS, resolveGatewayIntents } from './transport/discordjs.js'
+export { DiscordJsTransport, normalizeMessageCreate, normalizeMessageUpdate, normalizeMessageDelete, normalizeThreadUpdate, toDiscordMessageBody, LIVE_SMOKE_INTENT_IDS, resolveGatewayIntents } from './transport/discordjs.js'
 export { DiscordSessionBridge, mintDiscordSessionId, extractAssistantText, resolveAgentFace, buildDiscordCreateAgentExtras, prepareDiscordSessionCreate, DEFAULT_DISPATCH_TIMEOUT_MS } from './bridge.js'
 export {
   normalizePluginConfig,
@@ -209,6 +209,8 @@ export function createDiscordProvider(deps, config = {}) {
     outbox,
     observability: deps.observability,
     logger: deps.logger,
+    attachmentRoot: deps.attachmentRoot || process.env.DSH_DISCORD_ATTACH_DIR,
+    attachmentStagingRoot: outbox.attachmentStagingRoot,
   })
 
   /** @type {any} */
@@ -231,6 +233,7 @@ export function createDiscordProvider(deps, config = {}) {
     messageSend: (input) => semantic.messageSend(input),
     messageReply: (input) => semantic.messageReply(input),
     messageEdit: (input) => semantic.messageEdit(input),
+    messageDelete: (input) => semantic.messageDelete(input),
     threadCreate: (input) => semantic.threadCreate(input),
     notify: (input) => semantic.notify(input),
     postLabInteractionSmoke: (input) => bridge.postLabInteractionSmoke(input),
@@ -455,6 +458,118 @@ export function createDiscordProvider(deps, config = {}) {
           console.warn(`discord LAB tool smoke failed: ${err instanceof Error ? err.message : err}`)
         })
       }, 5000)
+    }
+
+    // LAB V1 closure smokes: reads / attach / delete (explicit env only).
+    const readSmokeAccount = process.env.DSH_DISCORD_READ_SMOKE_ACCOUNT
+    const readSmokeChannel = process.env.DSH_DISCORD_READ_SMOKE_CHANNEL
+    const readSmokeGuild = process.env.DSH_DISCORD_READ_SMOKE_GUILD
+    if (labLiveSmoke && readSmokeAccount && readSmokeChannel) {
+      setTimeout(() => {
+        ;(async () => {
+          const guilds = await semantic.guildList({ accountId: String(readSmokeAccount) })
+          const ch = await semantic.channelGet({
+            accountId: String(readSmokeAccount),
+            channelId: String(readSmokeChannel),
+          })
+          let channels = null
+          if (readSmokeGuild) {
+            channels = await semantic.channelList({
+              accountId: String(readSmokeAccount),
+              guildId: String(readSmokeGuild),
+              limit: 20,
+            })
+          }
+          const hist = await semantic.messageHistory({
+            accountId: String(readSmokeAccount),
+            channelId: String(readSmokeChannel),
+            limit: 5,
+          })
+          const firstId = hist.messages?.[0]?.id
+          let got = null
+          if (firstId) {
+            got = await semantic.messageGet({
+              accountId: String(readSmokeAccount),
+              channelId: String(readSmokeChannel),
+              messageId: firstId,
+            })
+          }
+          // eslint-disable-next-line no-console
+          console.info(
+            `discord LAB read smoke: guilds=${guilds.guilds?.length ?? 0} channel=${ch.channel?.id} archived=${ch.channel?.archived} hist=${hist.messages?.length ?? 0} get=${got?.message?.id || 'skip'} channels=${channels?.channels?.length ?? 'n/a'}`,
+          )
+        })().catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn(`discord LAB read smoke failed: ${err instanceof Error ? err.message : err}`)
+        })
+      }, 6000)
+    }
+
+    const attachSmokeAccount = process.env.DSH_DISCORD_ATTACH_SMOKE_ACCOUNT
+    const attachSmokeAlias = process.env.DSH_DISCORD_ATTACH_SMOKE_ALIAS
+    if (labLiveSmoke && attachSmokeAccount && attachSmokeAlias) {
+      setTimeout(() => {
+        semantic
+          .messageSend({
+            accountId: String(attachSmokeAccount),
+            target: { alias: String(attachSmokeAlias) },
+            content: process.env.DSH_DISCORD_ATTACH_SMOKE_CONTENT || 'DSH_ATTACH_OK',
+            attachments: [
+              {
+                text: 'dsh-piblox-discord harmless attachment fixture\n',
+                filename: 'dsh-lab-fixture.txt',
+              },
+            ],
+            operationId: `lab:attach:${attachSmokeAccount}:${Date.now()}`,
+            wait: true,
+          })
+          .then((r) => {
+            // eslint-disable-next-line no-console
+            console.info(
+              `discord LAB attach smoke: state=${r.state} op=${r.operation_id} resource=${r.discord_resource_id || ''}`,
+            )
+          })
+          .catch((err) => {
+            // eslint-disable-next-line no-console
+            console.warn(`discord LAB attach smoke failed: ${err instanceof Error ? err.message : err}`)
+          })
+      }, 7000)
+    }
+
+    const deleteSmokeAccount = process.env.DSH_DISCORD_DELETE_SMOKE_ACCOUNT
+    const deleteSmokeAlias = process.env.DSH_DISCORD_DELETE_SMOKE_ALIAS
+    if (labLiveSmoke && deleteSmokeAccount && deleteSmokeAlias) {
+      setTimeout(() => {
+        ;(async () => {
+          const sent = await semantic.messageSend({
+            accountId: String(deleteSmokeAccount),
+            target: { alias: String(deleteSmokeAlias) },
+            content: process.env.DSH_DISCORD_DELETE_SMOKE_CONTENT || 'DSH_DELETE_DISPOSABLE',
+            operationId: `lab:delete-prep:${deleteSmokeAccount}:${Date.now()}`,
+            wait: true,
+          })
+          const channelId =
+            liveConfig.accounts[deleteSmokeAccount]?.proactiveTargets?.[deleteSmokeAlias]?.id
+          if (!sent.discord_resource_id || !channelId) {
+            throw new Error(`delete smoke missing ids resource=${sent.discord_resource_id} channel=${channelId}`)
+          }
+          const del = await semantic.messageDelete({
+            accountId: String(deleteSmokeAccount),
+            channelId: String(channelId),
+            messageId: String(sent.discord_resource_id),
+            requireBotOwned: true,
+            operationId: `lab:delete:${deleteSmokeAccount}:${sent.discord_resource_id}`,
+            wait: true,
+          })
+          // eslint-disable-next-line no-console
+          console.info(
+            `discord LAB delete smoke: prep=${sent.state}/${sent.discord_resource_id} delete=${del.state} op=${del.operation_id}`,
+          )
+        })().catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn(`discord LAB delete smoke failed: ${err instanceof Error ? err.message : err}`)
+        })
+      }, 8500)
     }
   }
   api.stop = async function stop() {

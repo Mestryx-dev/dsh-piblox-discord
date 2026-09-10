@@ -7,7 +7,7 @@
  */
 
 /**
- * @typedef {'sendMessage'|'replyMessage'|'editMessage'|'createThread'|'deferInteraction'|'followUpInteraction'|'editInteractionReply'|'updateInteraction'} OperationType
+ * @typedef {'sendMessage'|'replyMessage'|'editMessage'|'deleteMessage'|'createThread'|'deferInteraction'|'followUpInteraction'|'editInteractionReply'|'updateInteraction'} OperationType
  */
 
 /**
@@ -34,6 +34,13 @@
  *   ephemeral?: boolean,
  *   threadName?: string,
  *   allowedMentions?: { parse?: string[], users?: string[], roles?: string[], repliedUser?: boolean },
+ *   attachments?: Array<{
+ *     filename: string,
+ *     contentType?: string,
+ *     bytes?: number,
+ *     stagingRelPath: string,
+ *   }>,
+ *   requireBotOwned?: boolean,
  *   raw?: Record<string, unknown>,
  * }} OutboxPayload
  */

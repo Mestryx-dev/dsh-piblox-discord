@@ -7,11 +7,13 @@
  */
 
 import { createHash } from 'node:crypto'
+import { join } from 'node:path'
 import { createOutboxStore, defaultOutboxPath } from './store.js'
 import { toReceipt } from './types.js'
 import { classifyTransportError, computeBackoffMs, nonceFromOperationId } from '../errors.js'
 import { toClassifiableError } from '../discord-errors.js'
 import { SystemClock } from '../clock.js'
+import { loadStagedAttachment } from '../attachments.js'
 
 /**
  * @typedef {import('./types.js').OutboxOperation} OutboxOperation
@@ -31,11 +33,15 @@ const DEFAULT_MAX_ATTEMPTS = 8
  * @param {{ emit?: Function, info?: Function, warn?: Function }} [options.observability]
  * @param {{ baseMs?: number, maxMs?: number, jitterFn?: Function, maxAttempts?: number }} [options.retry]
  * @param {Set<string>|string[]} [options.isolatedAccounts]
+ * @param {string} [options.attachmentStagingRoot]
  */
 export function createDeliveryOutbox(options) {
   const transport = options.transport
   const clock = options.clock || new SystemClock()
-  const store = createOutboxStore(options.storePath || defaultOutboxPath())
+  const storePath = options.storePath || defaultOutboxPath()
+  const store = createOutboxStore(storePath)
+  const attachmentStagingRoot =
+    options.attachmentStagingRoot || join(storePath, '..', 'discord-attachment-staging')
   const retry = {
     baseMs: options.retry?.baseMs ?? 500,
     maxMs: options.retry?.maxMs ?? 60_000,
@@ -416,6 +422,7 @@ export function createDeliveryOutbox(options) {
   /** @param {OutboxOperation} op */
   async function dispatchToTransport(op) {
     try {
+      /** @type {import('../types.js').OutboundMessage} */
       const payload = {
         content: op.payload.content,
         components: op.payload.components,
@@ -427,6 +434,12 @@ export function createDeliveryOutbox(options) {
         nonce: op.nonce || undefined,
         enforceNonce: op.enforce_nonce || undefined,
         raw: op.payload.raw,
+      }
+
+      if (Array.isArray(op.payload.attachments) && op.payload.attachments.length) {
+        payload.files = op.payload.attachments.map((a) =>
+          loadStagedAttachment(attachmentStagingRoot, a),
+        )
       }
 
       switch (op.operation_type) {
@@ -441,6 +454,12 @@ export function createDeliveryOutbox(options) {
           )
         case 'editMessage':
           return await transport.editMessage(op.account_id, op.target.channelId, op.target.messageId, payload)
+        case 'deleteMessage': {
+          requireTransportFn(transport, 'deleteMessage')
+          return await transport.deleteMessage(op.account_id, op.target.channelId, op.target.messageId, {
+            requireBotOwned: op.payload.requireBotOwned !== false,
+          })
+        }
         case 'createThread': {
           if (typeof transport.createThread !== 'function') {
             throw Object.assign(new Error('createThread not supported by transport'), {
@@ -472,7 +491,7 @@ export function createDeliveryOutbox(options) {
           return await transport.updateInteraction(op.account_id, op.target.interactionId, payload)
         }
         default: {
-          const _exhaustive = op.operation_type
+          const _exhaustive = /** @type {never} */ (op.operation_type)
           throw Object.assign(new Error(`unknown operation_type: ${_exhaustive}`), {
             code: 'invalid_payload',
           })
@@ -544,6 +563,7 @@ export function createDeliveryOutbox(options) {
     isolateAccount,
     clearAccountIsolation,
     isAccountIsolated,
+    attachmentStagingRoot,
     snapshot: () => store.snapshot(),
   }
 }
@@ -564,6 +584,15 @@ function sanitizePayload(payload) {
     ephemeral: payload.ephemeral,
     allowedMentions: payload.allowedMentions,
     threadName: payload.threadName,
+    attachments: Array.isArray(payload.attachments)
+      ? payload.attachments.map((a) => ({
+          filename: String(a.filename || 'file'),
+          contentType: a.contentType != null ? String(a.contentType) : undefined,
+          bytes: Number.isFinite(a.bytes) ? Number(a.bytes) : undefined,
+          stagingRelPath: String(a.stagingRelPath || ''),
+        }))
+      : undefined,
+    requireBotOwned: payload.requireBotOwned,
     raw: payload.raw ? { ...payload.raw } : undefined,
   }
 }

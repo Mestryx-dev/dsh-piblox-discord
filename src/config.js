@@ -293,6 +293,45 @@ export function authorizeInbound(account, event) {
 }
 
 /**
+ * Channel/guild scope only (for uncached MESSAGE_DELETE without author).
+ * @param {ReturnType<typeof normalizeAccountConfig>} account
+ * @param {{
+ *   guildId?: string,
+ *   channelId?: string,
+ *   parentChannelId?: string,
+ *   threadId?: string,
+ *   isDm?: boolean,
+ * }} event
+ */
+export function authorizeInboundChannelOnly(account, event) {
+  if (!account.enabled) {
+    return { ok: false, reason: 'account_disabled' }
+  }
+  if (event.isDm) {
+    if (!account.dm.enabled) return { ok: false, reason: 'dm_disabled' }
+    return { ok: true }
+  }
+  if (!account.allowAllGuilds) {
+    if (!account.allowedGuilds.length) return { ok: false, reason: 'guilds_deny_all' }
+    if (!event.guildId || !account.allowedGuilds.includes(String(event.guildId))) {
+      return { ok: false, reason: 'guild_denied' }
+    }
+  }
+  const inThread = Boolean(event.threadId) || Boolean(event.parentChannelId)
+  if (inThread && !event.parentChannelId && !account.allowAllChannels) {
+    return { ok: false, reason: 'thread_parent_unknown' }
+  }
+  const channelKey = event.parentChannelId || event.channelId
+  if (!account.allowAllChannels) {
+    if (!account.allowedChannels.length) return { ok: false, reason: 'channels_deny_all' }
+    if (!channelKey || !account.allowedChannels.includes(String(channelKey))) {
+      return { ok: false, reason: 'channel_denied' }
+    }
+  }
+  return { ok: true }
+}
+
+/**
  * Human-readable allowlist summary for operator UI (no tokens).
  * @param {ReturnType<typeof normalizeAccountConfig>} account
  */

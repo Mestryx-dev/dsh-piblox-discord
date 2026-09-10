@@ -23,6 +23,13 @@
  *   enforceNonce?: boolean,
  *   ephemeral?: boolean,
  *   allowedMentions?: { parse?: string[], users?: string[], roles?: string[], repliedUser?: boolean },
+ *   files?: Array<{ name: string, data: Buffer|Uint8Array, contentType?: string }>,
+ *   attachments?: Array<{
+ *     filename: string,
+ *     contentType?: string,
+ *     bytes?: number,
+ *     stagingRelPath: string,
+ *   }>,
  *   raw?: Record<string, unknown>,
  * }} OutboundMessage
  */
@@ -41,7 +48,7 @@
 /**
  * Normalized inbound message event (plugin-local; not a Core EVENT_TYPE).
  * @typedef {{
- *   type: 'discord.message.created',
+ *   type: 'discord.message.created'|'discord.message.updated'|'discord.message.deleted',
  *   accountId: string,
  *   eventId: string,
  *   guildId?: string,
@@ -54,9 +61,28 @@
  *   content: string,
  *   isBot?: boolean,
  *   isDm?: boolean,
+ *   partial?: boolean,
  *   correlationId?: string,
  *   raw?: Record<string, unknown>,
  * }} PlatformMessageEvent
+ */
+
+/**
+ * Normalized thread lifecycle (transport/state only — does not mutate bindings).
+ * @typedef {{
+ *   type: 'discord.thread.updated',
+ *   accountId: string,
+ *   eventId: string,
+ *   guildId?: string,
+ *   channelId: string,
+ *   threadId: string,
+ *   parentChannelId?: string,
+ *   archived?: boolean,
+ *   locked?: boolean,
+ *   name?: string | null,
+ *   correlationId?: string,
+ *   raw?: Record<string, unknown>,
+ * }} PlatformThreadEvent
  */
 
 /**
@@ -90,7 +116,7 @@
  */
 
 /**
- * @typedef {PlatformMessageEvent | PlatformInteraction} PlatformEvent
+ * @typedef {PlatformMessageEvent | PlatformInteraction | PlatformThreadEvent} PlatformEvent
  */
 
 /**
