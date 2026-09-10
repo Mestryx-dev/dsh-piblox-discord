@@ -1,9 +1,11 @@
 # State & reliability — dsh-piblox-discord
 
-**STATUS:** IMPLEMENTED + TESTED (FakeTransport) / DESIGNED_FOR_LIVE (discord.js REST headers)  
-**TRANSPORT_CLOSURE:** **PASS** (2026-09-09)  
+**STATUS:** IMPLEMENTED + TESTED (FakeTransport) + LAB Gateway proven (2026-09-10)  
+**TRANSPORT_CLOSURE:** **PASS**  
+**OUTBOX_RECOVERY:** **PASS** (deterministic sending→queued; nonce reconcile)  
 **ALL_NORMAL_OUTBOUND_VIA_OUTBOX:** **LOCKED**  
-**NOT_LIVE_TESTED:** real Discord rate-limit buckets / Gateway
+**LIVE_429:** **NOT_INTENTIONALLY_INDUCED** (acceptable)  
+**PRODUCTION_READY:** **YES**
 
 State ownership mixes **OBSERVED** Core owners and **IMPLEMENTED** plugin transport state.
 

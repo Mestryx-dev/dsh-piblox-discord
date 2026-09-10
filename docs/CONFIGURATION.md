@@ -1,6 +1,7 @@
 # Configuration — dsh-piblox-discord
 
-**STATUS:** IMPLEMENTED (accounts ledger + Settings UI) / LIVE GATEWAY NOT ACTIVATED  
+**STATUS:** IMPLEMENTED (accounts ledger + Settings UI) / LAB Gateway active (operator allowlists)  
+**Attachments root (optional):** `DSH_DISCORD_ATTACH_DIR` — relative paths only for model tools.  
 
 ## Principles
 

@@ -1,14 +1,15 @@
 # dsh-piblox-discord
 
-**STATUS: V1 TRANSPORT + CONFIG PLANE PASS / LIVE_DISCORD_CREDENTIAL_READY=YES (dev token next, not prod)**
+**STATUS: V1 PRODUCTION_READY=YES** (2026-09-10) · Coverage: [`docs/CAPABILITY-MATRIX.md`](docs/CAPABILITY-MATRIX.md)
 
 First-party Cordis / DeepSeek Harness (DSH) **generic Discord provider**.
 
-Proven without live Discord:
+Proven (FakeTransport + LAB Gateway):
 
-- inbound → authorize → dedupe → ConversationBinding → agents → **DeliveryOutbox** → FakeTransport
-- Durable outbox with 429/Retry-After, crash recovery, multi-step groups
-- Inbound message/interaction dedupe with TTL + lease reclaim
+- inbound → authorize → dedupe → ConversationBinding → agents → **DeliveryOutbox** → Discord
+- Durable outbox: 429/Retry-After, crash recovery, send/reply/edit/**delete**/attachments
+- MESSAGE_CREATE / UPDATE / DELETE normalize (transcript mutation out of scope)
+- Semantic `ctx.discord` + policy-gated `discord_*` tools
 - **Settings → Discord** account CRUD; tokens in **dsh-piblox-secrets** only
 
 ```bash
@@ -16,7 +17,7 @@ npm test
 npm run smoke
 ```
 
-Pinned client: **`discord.js@14.27.0`** (skeleton only — no live connect).  
+Pinned client: **`discord.js@14.27.0`**.  
 Outbox ledger (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-outbox.json`  
 Inbound dedupe (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-inbound-dedupe.json`  
 Accounts config (default): `~/dsh-lab/runtime/dsh-home/ledger/discord-accounts.json`

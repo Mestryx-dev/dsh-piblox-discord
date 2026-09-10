@@ -1,7 +1,8 @@
 # Architecture — dsh-piblox-discord
 
 **STATUS:** V1 TRANSPORT + CONFIG PLANE + COMPONENTS/INTERACTIONS + **SEMANTIC SERVICE/TOOLS** IMPLEMENTED  
-(FakeTransport + Gateway LAB) / **PRODUCTION_READY = NO**  
+(FakeTransport + Gateway LAB) / **PRODUCTION_READY = YES** (V1 semantic, 2026-09-10)  
+Coverage SSOT: [`CAPABILITY-MATRIX.md`](CAPABILITY-MATRIX.md).  
 **Labels:** LOCKED intents from mission; OBSERVED DSH seams; IMPLEMENTED reliability + operator Settings + Components V2 encode + interaction path + semantic `ctx.discord` + policy-gated `discord_*` tools.
 
 **LOCKED:** `Modern Discord API / Components V2 baseline = LOCKED` ([ADR-0007](adr/0007-modern-discord-baseline.md)) — Discord HTTP **`v10`**, **`discord.js` 14.x** direction, Components V2 as first-class transport/render primitive (not legacy ActionRow-first).

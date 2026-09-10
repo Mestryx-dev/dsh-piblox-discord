@@ -1,6 +1,6 @@
 # Tool contract — dsh-piblox-discord
 
-**STATUS:** SEMANTIC TOOLS + SERVICE **IMPLEMENTED** (FakeTransport + Gateway LAB) / `discord.rest.raw` **DEFERRED**  
+**STATUS:** SEMANTIC TOOLS + SERVICE **IMPLEMENTED** (FakeTransport + Gateway LAB) · V1 **PRODUCTION_READY=YES** / `discord.rest.raw` **DEFERRED** (non-blocking)  
 **LOCKED:** Model tools are policy-gated wrappers over the Cordis `discord` semantic service; both share DeliveryOutbox.
 
 ## Ownership (LOCKED)
@@ -48,7 +48,10 @@ No direct REST from tool wrappers. No token arguments. No Vega-specific tool bra
 | `discord_message_send` | `discord.message.send` | L2 → AUTO override | outbox + nonce ≤25 |
 | `discord_message_reply` | `discord.message.reply` | L2 → AUTO override | outbox |
 | `discord_message_edit` | `discord.message.edit` | L2 → AUTO override | outbox |
+| `discord_message_delete` | `discord.message.delete` | L2 → AUTO override | bot-owned only (model); outbox |
 | `discord_thread_create` | `discord.thread.create` | L2 → AUTO override | reuses durable `thread:create:…` op |
+
+Attachments on `discord_message_send`: workspace-relative `path` under attach root, or `{ text, filename }` — no absolute paths / no `..`. Staged for outbox retries. See CAPABILITY-MATRIX.
 
 V1 compiled overrides map Discord mutation actions → **AUTO** because account allowlists are the scope gate; Core HITL park still requires an open agent turn (approval-channel V2). Risk remains **L2** for observability.
 

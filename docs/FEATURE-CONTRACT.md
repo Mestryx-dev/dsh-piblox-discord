@@ -28,7 +28,7 @@ Contract correction only — **do not** treat this section as an implementation 
 - modern Gateway / REST foundation (`v10` isolated in transport)
 - Components V2 **foundation** (representable tree + typed subset)
 - legacy message compatibility (`content` / embeds / ActionRow)
-- basic current message model (send / reply / edit, references, mentions, attachments)
+- basic current message model (send / reply / edit / delete, references, mentions, attachments) — **IMPLEMENTED**
 - buttons
 - basic selects
 - defer / follow-up
