@@ -111,6 +111,20 @@ export {
   resolveSemanticTarget,
   authorizeOutboundDelivery,
 } from './semantic/index.js'
+export {
+  createCapabilitySmokeHarness,
+  makeRunId,
+  smokeOperationId,
+  assertLabSafety,
+  assertNoMagicProductionTrigger,
+  deferredCapabilityResults,
+  buildMasterStatusComponents,
+  buildFinalSummaryComponents,
+  AUTO_CAPABILITY_KEYS,
+  INTERACTIVE_CAPABILITY_KEYS,
+  DEFERRED_KEYS,
+} from './lab/capability-smoke.js'
+
 
 /**
  * Build plugin runtime without Cordis (tests / embedding).
@@ -237,6 +251,41 @@ export function createDiscordProvider(deps, config = {}) {
     threadCreate: (input) => semantic.threadCreate(input),
     notify: (input) => semantic.notify(input),
     postLabInteractionSmoke: (input) => bridge.postLabInteractionSmoke(input),
+    /**
+     * LAB/dev-only: run V1 capability smoke harness.
+     * Never called automatically — scripts or operator invoke explicitly.
+     */
+    runCapabilitySmoke: async (input = {}) => {
+      const { createCapabilitySmokeHarness } = await import('./lab/capability-smoke.js')
+      const accountId = String(input.accountId || '')
+      const channelId = String(input.channelId || '')
+      const guildId = String(input.guildId || '')
+      if (!accountId || !channelId || !guildId) {
+        throw Object.assign(new Error('accountId, channelId, guildId required'), {
+          code: 'invalid_payload',
+        })
+      }
+      const harness = createCapabilitySmokeHarness({
+        accountId,
+        channelId,
+        guildId,
+        getAccount: () => liveConfig.accounts[accountId],
+        semantic,
+        outbox,
+        transport,
+        tools: input.tools || api._tools || null,
+        policy: input.policy || api._policy || null,
+        conversationBinding: deps.conversationBinding || null,
+        bridge,
+        awaitInteractionsMs: Number(input.awaitInteractionsMs) || 0,
+        pollIntervalMs: Number(input.pollIntervalMs) || 2000,
+        logger: deps.logger,
+      })
+      return harness.run({
+        runId: input.runId,
+        skipInteractiveWait: Boolean(input.skipInteractiveWait),
+      })
+    },
   }
 
   function applyLiveConfig(next) {

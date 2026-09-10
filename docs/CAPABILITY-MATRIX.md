@@ -225,3 +225,4 @@ Provider: normalize → authorize (channel-only if uncached delete) → dedupe �
 | OBSERVABILITY | **PASS** (Core types only; no tokens) |
 | CLEAN_INSTALL | **PASS** |
 | LIVE_CORE_SMOKE | **PASS** (read + attach + delete + reconnect) |
+| V1_CAPABILITY_SMOKE_HARNESS | LAB/dev only — see [`LAB-CAPABILITY-SMOKE.md`](./LAB-CAPABILITY-SMOKE.md); not auto-started |

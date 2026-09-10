@@ -11,6 +11,7 @@
   },
   "files": [
     "src",
+    "scripts",
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
@@ -30,7 +31,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "smoke": "node test/smoke.js"
+    "smoke": "node test/smoke.js",
+    "capability-smoke": "node scripts/discord-v1-capability-smoke.mjs --mode=fake"
   },
   "dependencies": {
     "discord.js": "14.27.0"
