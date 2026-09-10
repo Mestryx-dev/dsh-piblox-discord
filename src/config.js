@@ -23,7 +23,8 @@ import { normalizeIntents } from './intents.js'
  *   label?: string,
  *   credentials?: string,
  *   agentPreset?: string,
-
+ *   conversationMode?: 'channel'|'thread_per_conversation',
+ *
  *   intents?: string[],
  *   allowedGuilds?: string[],
  *   allowedChannels?: string[],
@@ -53,6 +54,12 @@ export const DEFAULT_ACCOUNT = Object.freeze({
   credentials: undefined,
   /** unset = fail-closed for AgentLoop (no silent default agent) */
   agentPreset: undefined,
+  /**
+   * Conversation topology (LOCKED default = channel for backward compatibility).
+   * - channel: allowed channel messages share one ConversationBinding/session
+   * - thread_per_conversation: each top-level launcher message → Discord thread + session
+   */
+  conversationMode: 'channel',
   intents: ['Guilds', 'GuildMessages', 'DirectMessages', 'MessageContent'],
   allowedGuilds: [],
   allowedChannels: [],
@@ -71,6 +78,20 @@ export const DEFAULT_ACCOUNT = Object.freeze({
 
 /** Matches `@deepseek-ai/dsh-agent-presets` PRESET_ID. */
 export const AGENT_PRESET_ID_RE = /^[a-z0-9][a-z0-9-]*$/
+
+export const CONVERSATION_MODES = Object.freeze(['channel', 'thread_per_conversation'])
+
+/**
+ * Normalize conversation topology mode. Default `channel` (backward compatible).
+ * @param {unknown} raw
+ * @returns {'channel'|'thread_per_conversation'}
+ */
+export function normalizeConversationMode(raw) {
+  const mode = raw != null ? String(raw).trim() : ''
+  if (!mode || mode === 'channel') return 'channel'
+  if (mode === 'thread_per_conversation') return 'thread_per_conversation'
+  throw new TypeError(`dsh-piblox-discord: invalid conversationMode (${mode})`)
+}
 
 /**
  * Normalize optional agent preset id. Empty → undefined (fail-closed at runtime).
@@ -127,6 +148,7 @@ export function normalizeAccountConfig(raw = {}) {
     label,
     credentials: raw.credentials != null ? String(raw.credentials) : undefined,
     agentPreset: normalizeAgentPresetId(raw.agentPreset),
+    conversationMode: normalizeConversationMode(raw.conversationMode),
     allowedGuilds: Array.isArray(raw.allowedGuilds)
       ? raw.allowedGuilds.map(String)
       : [...DEFAULT_ACCOUNT.allowedGuilds],
@@ -192,13 +214,24 @@ export function normalizePluginConfig(raw = {}) {
  * Fail-closed allowlist evaluation (LOCKED).
  *
  * Guild MESSAGE_CREATE order (bot rejection / dedupe live in the bridge after this):
- *   account → guild → channel → guild user
+ *   account → guild → channel (or PARENT channel for threads) → guild user
+ *
+ * Thread events:
+ *   channel_id is the thread snowflake; authorize via parent_channel_id against allowedChannels.
+ *   Missing/unverifiable parent → fail closed (unless allowAllChannels).
  *
  * DM policy is independent (dm.enabled / dm.allowAllUsers / dm.allowedUsers).
  * No Discord Administrator / permission-bit implicit bypass.
  *
  * @param {ReturnType<typeof normalizeAccountConfig>} account
- * @param {{ guildId?: string, channelId?: string, userId?: string, isDm?: boolean }} event
+ * @param {{
+ *   guildId?: string,
+ *   channelId?: string,
+ *   parentChannelId?: string,
+ *   threadId?: string,
+ *   userId?: string,
+ *   isDm?: boolean,
+ * }} event
  * @returns {{ ok: true } | { ok: false, reason: string }}
  */
 export function authorizeInbound(account, event) {
@@ -231,11 +264,19 @@ export function authorizeInbound(account, event) {
     }
   }
 
+  const inThread = Boolean(event.threadId) || Boolean(event.parentChannelId)
+  if (inThread && !event.parentChannelId && !account.allowAllChannels) {
+    return { ok: false, reason: 'thread_parent_unknown' }
+  }
+
+  // Threads: allowlist the PARENT launcher channel, never require dynamic thread ids.
+  const channelKey = event.parentChannelId || event.channelId
+
   if (!account.allowAllChannels) {
     if (!account.allowedChannels.length) {
       return { ok: false, reason: 'channels_deny_all' }
     }
-    if (!event.channelId || !account.allowedChannels.includes(String(event.channelId))) {
+    if (!channelKey || !account.allowedChannels.includes(String(channelKey))) {
       return { ok: false, reason: 'channel_denied' }
     }
   }

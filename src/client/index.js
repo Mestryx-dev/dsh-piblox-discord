@@ -395,6 +395,15 @@ window.__ModuleLoader__.load({
           "Preset enumeration unavailable — enter a canonical DSH agent preset id.",
         agentPresetNone: "— not set (fail-closed)",
         agentLine: "Agent",
+        conversationMode: "Conversation mode",
+        conversationModeChannel: "Channel session",
+        conversationModeThread: "Thread per conversation",
+        conversationModeChannelHint:
+          "All allowed messages in the channel reuse one DSH session.",
+        conversationModeThreadHint:
+          "Each new top-level message starts a Discord thread and a new DSH session.",
+        conversationModeThreadBanner:
+          "New top-level messages in allowed channels create a separate Discord thread and DSH session.",
         allowAllGuilds: "Allow all guilds",
         allowAllChannels: "Allow all channels",
         allowAllGuildUsers: "Allow all guild users",
@@ -652,6 +661,11 @@ window.__ModuleLoader__.load({
       const [agentPreset, setAgentPreset] = useState(
         initial && initial.agentPreset ? String(initial.agentPreset) : "",
       );
+      const [conversationMode, setConversationMode] = useState(
+        initial && initial.conversationMode === "thread_per_conversation"
+          ? "thread_per_conversation"
+          : "channel",
+      );
       const [intents, setIntents] = useState(
         new Set(
           (initial && initial.intents) ||
@@ -685,6 +699,7 @@ window.__ModuleLoader__.load({
             label: label || undefined,
             enabled,
             agentPreset: agentPreset.trim() || null,
+            conversationMode,
             intents: [...intents],
             allowAllGuilds,
             allowAllChannels,
@@ -839,6 +854,36 @@ window.__ModuleLoader__.load({
                         style: css.input,
                       }),
                 }),
+                jsx(Field, {
+                  id: baseId + "-conversationMode",
+                  label: t("conversationMode"),
+                  hint:
+                    conversationMode === "thread_per_conversation"
+                      ? t("conversationModeThreadHint")
+                      : t("conversationModeChannelHint"),
+                  children: jsxs("select", {
+                    id: baseId + "-conversationMode",
+                    value: conversationMode,
+                    onChange: (ev) => setConversationMode(ev.target.value),
+                    style: css.input,
+                    children: [
+                      jsx("option", {
+                        value: "channel",
+                        children: t("conversationModeChannel"),
+                      }),
+                      jsx("option", {
+                        value: "thread_per_conversation",
+                        children: t("conversationModeThread"),
+                      }),
+                    ],
+                  }),
+                }),
+                conversationMode === "thread_per_conversation"
+                  ? jsx("p", {
+                      style: { margin: 0, fontSize: "12px", opacity: 0.8 },
+                      children: t("conversationModeThreadBanner"),
+                    })
+                  : null,
                 isNew
                   ? jsx(Field, {
                       id: baseId + "-token",

@@ -51,13 +51,17 @@ export function normalizeMessageCreate(accountId, message) {
   // Do NOT infer DM merely because guildId/channel cache is missing (that silently
   // routes guild MESSAGE_CREATE into dm_disabled before dedupe claim).
   const isDm = Boolean(channel?.isDMBased?.() === true)
-  const threadId =
+  const isThread =
     typeof channel?.isThread === 'function'
-      ? channel.isThread()
-        ? String(message.channelId)
-        : undefined
-      : channel?.isThread
-        ? String(message.channelId)
+      ? Boolean(channel.isThread())
+      : Boolean(channel?.isThread)
+  const threadId = isThread ? String(message.channelId) : undefined
+  // Thread channel_id is the thread snowflake; parent_id is the launcher channel.
+  const parentChannelId =
+    isThread && channel?.parentId != null
+      ? String(channel.parentId)
+      : isThread && message?.channel?.parentId != null
+        ? String(message.channel.parentId)
         : undefined
 
   return {
@@ -68,6 +72,7 @@ export function normalizeMessageCreate(accountId, message) {
     guildId: message?.guildId != null ? String(message.guildId) : undefined,
     channelId: String(message?.channelId || ''),
     threadId,
+    parentChannelId,
     userId: String(message?.author?.id || ''),
     content: String(message?.content ?? ''),
     isBot: Boolean(message?.author?.bot),
@@ -75,6 +80,7 @@ export function normalizeMessageCreate(accountId, message) {
     raw: {
       timestamp: message?.createdAt?.toISOString?.() || message?.createdTimestamp || null,
       author_bot: Boolean(message?.author?.bot),
+      parent_id: parentChannelId || null,
     },
   }
 }
@@ -503,6 +509,92 @@ export class DiscordJsTransport {
         channelId: String(channelId),
         messageId: String(edited.id),
         guildId: edited.guildId != null ? String(edited.guildId) : undefined,
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * Create a public thread from a parent channel message (preferred) or reconcile
+   * an existing thread already started from that message.
+   *
+   * Required Discord permissions (typical): View Channel, Send Messages,
+   * Read Message History, Create Public Threads, Send Messages in Threads.
+   * Do not request Administrator / Manage Threads unless API forces it.
+   *
+   * @param {string} accountId
+   * @param {string} parentChannelId
+   * @param {{ name?: string, messageId?: string, autoArchiveDuration?: number|string, reason?: string }} [opts]
+   * @returns {Promise<SentMessage & { threadId: string, id: string }>}
+   */
+  async createThread(accountId, parentChannelId, opts = {}) {
+    try {
+      const client = this._requireClient(accountId)
+      const parentId = String(parentChannelId)
+      const channel = await client.channels.fetch(parentId)
+      if (!channel) {
+        throw new TransportError('unknown_target', `parent channel not found: ${parentId}`)
+      }
+      const name = String(opts.name || 'Conversation').slice(0, 100)
+      const messageId = opts.messageId != null ? String(opts.messageId) : ''
+      if (!messageId) {
+        throw new TransportError(
+          'invalid_payload',
+          'createThread requires messageId (start thread from parent message)',
+        )
+      }
+
+      const message = await channel.messages.fetch(messageId)
+      const toSent = (thread) => ({
+        accountId,
+        channelId: String(thread.id),
+        messageId,
+        threadId: String(thread.id),
+        guildId: thread.guildId != null ? String(thread.guildId) : undefined,
+        id: String(thread.id),
+      })
+
+      if (message.hasThread) {
+        let thread = message.thread
+        if (!thread && typeof channel.threads?.fetch === 'function') {
+          try {
+            const fetched = await channel.threads.fetchActive?.()
+            // Prefer message.thread; fall through to startThread reconcile below if missing
+            thread = message.thread
+          } catch {
+            /* ignore */
+          }
+        }
+        if (thread?.id) return toSent(thread)
+        // Refresh message cache — Discord may have created the thread already
+        try {
+          const refreshed = await channel.messages.fetch(messageId)
+          if (refreshed.thread?.id) return toSent(refreshed.thread)
+        } catch {
+          /* ignore */
+        }
+      }
+
+      try {
+        const thread = await message.startThread({
+          name,
+          autoArchiveDuration: opts.autoArchiveDuration ?? 60,
+          reason: opts.reason,
+        })
+        return toSent(thread)
+      } catch (err) {
+        // Idempotent reconcile: thread already exists for this starter message
+        const msg = err instanceof Error ? err.message : String(err)
+        if (/already|thread/i.test(msg) || message.hasThread) {
+          try {
+            const refreshed = await channel.messages.fetch(messageId)
+            if (refreshed.thread?.id) return toSent(refreshed.thread)
+          } catch {
+            /* fall through */
+          }
+        }
+        throw err
       }
     } catch (err) {
       throw mapDiscordJsError(err)

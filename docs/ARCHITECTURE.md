@@ -166,18 +166,32 @@ business logic branches (`if vega` is forbidden in Core code).
 ```text
 Discord interaction/event (FakeTransport inject today; Gateway later)
   → account_id attach
-  → authorize (guild/channel/user allowlists; `[]` = deny all)  [plugin config LOCKED]
+  → authorize (guild / channel|PARENT channel for threads / user; `[]` = deny all)
   → inbound dedupe claim (account_id + message_id | interaction_id)
-  → normalize → DiscordNormalizedEvent | UnknownDiscordEvent
+  → [thread_per_conversation + top-level] outbox createThread from parent message
+       → rewrite event to thread_id (parent message remains dedupe identity)
   → ConversationBinding.resolveOrCreate(...)     [OBSERVED]
   → mint/resume DSH session_id via ctx.agents.create|get|resume  [LOCKED — ADR-0008]
   → observability.mint/bind + emit request.received  [OBSERVED closed types]
   → consumer routing (agent.followup / session/event)  [LOCKED — ADR-0008]
   → mark inbound completed
-  → assistant output → DeliveryOutbox → transport
+  → assistant output → DeliveryOutbox → transport (targets thread when bound)
 ```
 
 Ordering note: **authorize before claim** so denied traffic never enters the durable dedupe store.
+
+**Conversation topology (ADR-0013):**
+
+| Mode | Entry surface | Conversation surface | Binding |
+|---|---|---|---|
+| `channel` (default) | parent channel | same channel | `discord:<acct>.channel:<channel_id>` |
+| `thread_per_conversation` | launcher channel | Discord thread from starter message | `discord:<acct>.thread:<thread_id>` |
+
+Channel = durable entry surface. Thread = conversation surface. ConversationBinding = session identity SSOT.
+Both modes remain supported; accounts default to `channel` (no silent migration).
+
+Thread authorization uses **parent_channel_id** against `allowedChannels` — dynamic thread ids are never manually listed.
+Missing/unverifiable parent → fail closed.
 
 Consumers must not depend on whether the interaction arrived via Gateway or HTTP.
 
@@ -186,7 +200,7 @@ Consumers must not depend on whether the interaction arrived via Gateway or HTTP
 ```text
 assistant/chunk|message | DSH consumer / messages API
   → coalesce stream buffer (no per-token enqueue)
-  → outbox.enqueue (sendMessage | replyMessage | editMessage)
+  → outbox.enqueue (sendMessage | replyMessage | editMessage | createThread)
   → outbox.tick → DiscordTransport
   → delivered | retry_wait | failed_terminal (receipt)
 ```
@@ -196,6 +210,7 @@ assistant/chunk|message | DSH consumer / messages API
 **Idempotency (LOCKED principle):**
 
 - Create Message → Discord `nonce` + `enforce_nonce=true` where applicable.
+- Thread create → durable `operation_id` = `thread:create:<account_id>:<parent_message_id>`; reconcile via outbox receipt / Discord starter-message thread (no invented HTTP Idempotency-Key).
 - Do **not** invent a generic Discord HTTP `Idempotency-Key`.
 - Other operations → durable operation IDs + returned Discord resource IDs + reconciliation.
 

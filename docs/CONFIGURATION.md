@@ -70,6 +70,7 @@ discord:
       label: Lab bot
       credentials: DISCORD_LAB_BOT_TOKEN   # reference only
       agentPreset: vega                   # canonical DSH agent preset id (required for new AgentLoop sessions)
+      conversationMode: channel           # channel | thread_per_conversation (default channel)
       intents:
         - Guilds
         - GuildMessages
@@ -77,7 +78,7 @@ discord:
         - MessageContent                 # privileged — enable only if required
       allowed_guilds: []                 # LOCKED: empty = deny all
       allow_all_guilds: false
-      allowed_channels: []               # LOCKED: empty = deny all
+      allowed_channels: []               # LOCKED: empty = deny all (launcher / parent channels)
       allow_all_channels: false
       allowed_users: []                  # LOCKED: guild MESSAGE_CREATE users; empty = deny all
       allow_all_users: false             # distinct from dm.allow_all_users
@@ -91,11 +92,22 @@ discord:
 Guild MESSAGE_CREATE authorization order (LOCKED):
 
 ```text
-account → guild → channel → guild user → bot rejection → dedupe → ConversationBinding / AgentLoop
+account → guild → channel|PARENT channel (threads) → guild user → bot rejection → dedupe
+  → [thread_per_conversation] createThread → ConversationBinding / AgentLoop
 ```
+
+Thread events authorize via **parent launcher channel** allowlist — do not list dynamic `thread_id`s.
+Missing parent → `thread_parent_unknown` (fail closed).
 
 Denied guild users never claim dedupe, create bindings, open sessions, follow up, or enqueue outbound.
 There is **no** Discord Administrator / permission-bit implicit bypass.
+
+**Conversation mode (Settings → Discord → General):**
+
+| Value | Behaviour |
+|---|---|
+| `channel` (default) | All allowed messages in the channel reuse one DSH session |
+| `thread_per_conversation` | Each new top-level message starts a Discord thread and a new DSH session |
 
 ## Public Settings API (redacted)
 
@@ -106,6 +118,7 @@ There is **no** Discord Administrator / permission-bit implicit bypass.
   "account_id": "lab",
   "enabled": true,
   "agentPreset": "vega",
+  "conversationMode": "channel",
   "credentials": { "configured": true, "ref": "DISCORD_LAB_BOT_TOKEN" },
   "status": "stopped",
   "scope_summary": { "guilds": "deny_all", "channels": "deny_all", "users": "deny_all", "dm": "disabled" }

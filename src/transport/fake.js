@@ -276,7 +276,8 @@ export class FakeTransport {
   }
 
   /**
-   * Minimal thread create for multi-step groups (Fake only).
+   * Thread create from parent message — deterministic by accountId+messageId so
+   * retries/reconcile do not spawn duplicate threads in tests.
    * @param {string} accountId
    * @param {string} parentChannelId
    * @param {{ name?: string, messageId?: string }} opts
@@ -287,20 +288,39 @@ export class FakeTransport {
     }
     const fail = this._takeFailure(accountId)
     if (fail) this._throwFailure(fail)
-    const threadId = `thread_${randomUUID().slice(0, 8)}`
+
+    if (!this._threadByParentMessage) {
+      /** @type {Map<string, any>} */
+      this._threadByParentMessage = new Map()
+    }
+    const parentMessageId = opts.messageId != null ? String(opts.messageId) : ''
+    const reconcileKey = parentMessageId ? `${accountId}:${parentMessageId}` : ''
+    if (reconcileKey && this._threadByParentMessage.has(reconcileKey)) {
+      return this._threadByParentMessage.get(reconcileKey)
+    }
+
+    const threadId = parentMessageId
+      ? `thread_from_${parentMessageId}`
+      : `thread_${randomUUID().slice(0, 8)}`
     const sent = {
       accountId,
       channelId: threadId,
-      messageId: opts.messageId || `thread_root_${++this._seq}`,
+      // Keep starter message id for audit; outbox prefers threadId as resource id
+      messageId: parentMessageId || `thread_root_${++this._seq}`,
       guildId: undefined,
       threadId,
       id: threadId,
+      parentChannelId: String(parentChannelId),
     }
     this.outbound.push({
       ...sent,
       op: 'createThread',
-      payload: { content: opts.name || 'thread', raw: { parentChannelId } },
+      payload: {
+        content: opts.name || 'thread',
+        raw: { parentChannelId: String(parentChannelId), parentMessageId },
+      },
     })
+    if (reconcileKey) this._threadByParentMessage.set(reconcileKey, sent)
     return sent
   }
 }

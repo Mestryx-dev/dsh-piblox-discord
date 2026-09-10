@@ -60,6 +60,9 @@ dump()
 | Thread | `discord` | `<account_id>.thread` | `<thread_id>` |
 | Channel + user (optional) | `discord` | `<account_id>.channel_user` | `<channel_id>.<user_id>` |
 
+**Topology modes (ADR-0013):** account field `conversationMode` = `channel` (default) | `thread_per_conversation`.
+In thread mode, each top-level launcher message creates/reconciles one Discord thread from that message, then binds `…thread:<thread_id>` and mints a new DSH session with `account.agentPreset`. Follow-ups inside the thread reuse the same binding/session. Assistant output targets the thread id only (never the launcher channel).
+
 ---
 
 ## 3. Session integration seam (OBSERVED — RESOLVED)

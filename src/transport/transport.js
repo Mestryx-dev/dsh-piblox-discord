@@ -22,6 +22,7 @@
  *   sendMessage(accountId: string, channelId: string, payload: OutboundMessage): Promise<SentMessage>,
  *   replyMessage(accountId: string, channelId: string, messageId: string, payload: OutboundMessage): Promise<SentMessage>,
  *   editMessage(accountId: string, channelId: string, messageId: string, payload: OutboundMessage): Promise<SentMessage>,
+ *   createThread?(accountId: string, parentChannelId: string, opts?: { name?: string, messageId?: string }): Promise<SentMessage & { threadId: string }>,
  * }} DiscordTransport
  */
 

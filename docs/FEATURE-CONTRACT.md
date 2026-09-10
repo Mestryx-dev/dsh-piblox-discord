@@ -1,6 +1,6 @@
 # Feature contract — dsh-piblox-discord
 
-**STATUS:** TARGET CONTRACT **LOCKED** (ADR-0007) / implementation partial (transport + config plane)  
+**STATUS:** TARGET CONTRACT **LOCKED** (ADR-0007) / implementation progressing (transport + config plane + thread topology)  
 Target surface = what the plugin is meant to become.  
 V1 = first shippable increment that proves the architecture — **without** redesigning for Components V2 / modern install / delivery modes later.
 

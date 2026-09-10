@@ -324,7 +324,11 @@ export function createDeliveryOutbox(options) {
         const op = data.operations[claimed.operation_id]
         if (!op) return
         op.state = 'delivered'
-        op.discord_resource_id = result.messageId || result.threadId || result.id || null
+        // createThread: durable id is the thread snowflake, not the starter message id
+        op.discord_resource_id =
+          op.operation_type === 'createThread'
+            ? result.threadId || result.id || result.channelId || null
+            : result.messageId || result.threadId || result.id || null
         if (result.channelId) op.target.channelId = result.channelId
         if (result.threadId) op.target.threadId = result.threadId
         op.last_error = null

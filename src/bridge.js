@@ -13,6 +13,7 @@ import { buildBindingIdentity, toExternalIdentity } from './binding.js'
 import { authorizeInbound } from './config.js'
 import { buildFollowupMessage } from './message-source.js'
 import { inboundEventKey } from './inbound-dedupe.js'
+import { threadNameFromContent, DEFAULT_THREAD_NAME } from './thread-name.js'
 
 /**
  * Extract assistant text from a session/event payload (best-effort).
@@ -356,12 +357,12 @@ export class DiscordSessionBridge {
     }
 
     // authorize before bot / claim (denied events never enter durable dedupe)
-    // Order: account → guild → channel → guild user (see authorizeInbound)
+    // Order: account → guild → channel|parent → guild user (see authorizeInbound)
     const auth = authorizeInbound(account, event)
     if (!auth.ok) {
       // eslint-disable-next-line no-console
       console.warn(
-        `discord bridge: authorize deny account=${event.accountId} reason=${auth.reason} guild=${event.guildId || ''} channel=${event.channelId || ''} user=${event.userId || ''} isDm=${Boolean(event.isDm)} msg=${event.messageId || ''}`,
+        `discord bridge: authorize deny account=${event.accountId} reason=${auth.reason} guild=${event.guildId || ''} channel=${event.channelId || ''} parent=${event.parentChannelId || ''} user=${event.userId || ''} isDm=${Boolean(event.isDm)} msg=${event.messageId || ''}`,
       )
       return { ok: false, reason: auth.reason }
     }
@@ -370,15 +371,45 @@ export class DiscordSessionBridge {
       return { ok: false, reason: 'ignored_bot' }
     }
 
+    const conversationMode = account.conversationMode || 'channel'
+    const spawnThread =
+      conversationMode === 'thread_per_conversation' && !event.isDm && !event.threadId
+
     // Existing binding → resume without requiring current account agentPreset.
     // New binding / remint create → fail-closed on missing/invalid agentPreset.
-    const identity = buildBindingIdentity(event.accountId, event)
-    const external = toExternalIdentity(identity)
-    const existingBinding =
-      typeof this.conversationBinding.resolve === 'function'
-        ? this.conversationBinding.resolve(external)
-        : null
-    if (!existingBinding) {
+    // Thread-spawn path binds to the thread_id (not the launcher channel).
+    let dispatchEvent = event
+    if (!spawnThread) {
+      const identity = buildBindingIdentity(event.accountId, event)
+      const external = toExternalIdentity(identity)
+      const existingBinding =
+        typeof this.conversationBinding.resolve === 'function'
+          ? this.conversationBinding.resolve(external)
+          : null
+      if (!existingBinding) {
+        const prep = await prepareDiscordSessionCreate({
+          account,
+          sessionCwd: this.sessionCwd || undefined,
+          agentPresets: this.agentPresets || undefined,
+          agentDefaultModel: this.agentDefaultModel || undefined,
+        })
+        if (!prep.ok) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `discord bridge: session_create refused account=${event.accountId} reason=${prep.reason}${prep.message ? ` (${prep.message})` : ''} msg=${event.messageId || ''} preset=${account.agentPreset || ''}`,
+          )
+          this.logger?.warn?.(
+            `discord inbound refused account=${event.accountId} reason=${prep.reason}${prep.message ? ` (${prep.message})` : ''}`,
+          )
+          return { ok: false, reason: prep.reason, message: prep.message }
+        }
+        // eslint-disable-next-line no-console
+        console.warn(
+          `discord bridge: session_create armed account=${event.accountId} preset=${prep.presetId} msg=${event.messageId || ''}`,
+        )
+      }
+    } else {
+      // New thread conversation always mints a session — preset required before claim.
       const prep = await prepareDiscordSessionCreate({
         account,
         sessionCwd: this.sessionCwd || undefined,
@@ -390,15 +421,8 @@ export class DiscordSessionBridge {
         console.warn(
           `discord bridge: session_create refused account=${event.accountId} reason=${prep.reason}${prep.message ? ` (${prep.message})` : ''} msg=${event.messageId || ''} preset=${account.agentPreset || ''}`,
         )
-        this.logger?.warn?.(
-          `discord inbound refused account=${event.accountId} reason=${prep.reason}${prep.message ? ` (${prep.message})` : ''}`,
-        )
         return { ok: false, reason: prep.reason, message: prep.message }
       }
-      // eslint-disable-next-line no-console
-      console.warn(
-        `discord bridge: session_create armed account=${event.accountId} preset=${prep.presetId} msg=${event.messageId || ''}`,
-      )
     }
 
     const { eventId, eventType } = inboundEventKey(event)
@@ -414,19 +438,123 @@ export class DiscordSessionBridge {
     }
 
     try {
-      const result = await this._withDispatchTimeout(() => this._dispatchMessageTurn(event, { external }))
+      if (spawnThread) {
+        const ensured = await this._ensureThreadForLauncherMessage(event, account)
+        if (!ensured.ok) {
+          // Leave dedupe claim leased for retry (no binding / no session created).
+          return { ok: false, reason: ensured.reason, message: ensured.message }
+        }
+        dispatchEvent = ensured.event
+      }
+
+      const identity = buildBindingIdentity(dispatchEvent.accountId, dispatchEvent)
+      const external = toExternalIdentity(identity)
+      const result = await this._withDispatchTimeout(() =>
+        this._dispatchMessageTurn(dispatchEvent, { external }),
+      )
       if (this.inboundDedupe && result.ok) {
         await this.inboundDedupe.markDispatched(event.accountId, eventId, {
           sessionId: result.sessionId,
         })
         await this.inboundDedupe.markCompleted(event.accountId, eventId)
       }
-      // agent_unavailable / other soft failures: leave claim as `claimed` for lease reclaim
+      // soft failures: leave claim as `claimed` for lease reclaim
       return result
     } catch (err) {
       // Leave claim in `claimed` with lease — reclaim after lease_until (at-least-once).
       this.logger?.warn?.(`inbound dispatch failed: ${err?.message || err}`)
       throw err
+    }
+  }
+
+  /**
+   * Create or reconcile a Discord thread for a top-level launcher message.
+   * Operation identity: thread:create:<accountId>:<parentMessageId>
+   * Must not create ConversationBinding / DSH session before thread exists.
+   *
+   * @param {import('./types.js').PlatformEvent} event
+   * @param {any} account
+   * @returns {Promise<{ ok: true, event: import('./types.js').PlatformEvent, threadId: string } | { ok: false, reason: string, message?: string }>}
+   */
+  async _ensureThreadForLauncherMessage(event, account) {
+    if (!this.outbox) {
+      return { ok: false, reason: 'outbox_required', message: 'DeliveryOutbox required for thread create' }
+    }
+    const parentChannelId = String(event.channelId || '')
+    const parentMessageId = String(event.messageId || '')
+    if (!parentChannelId || !parentMessageId) {
+      return { ok: false, reason: 'malformed_event', message: 'launcher message missing channel/message id' }
+    }
+
+    const operationId = `thread:create:${event.accountId}:${parentMessageId}`
+    const existing = this.outbox.getReceipt(operationId)
+    if (existing?.state === 'delivered' && existing.discord_resource_id) {
+      const threadId = String(existing.discord_resource_id)
+      return {
+        ok: true,
+        threadId,
+        event: {
+          ...event,
+          channelId: threadId,
+          threadId,
+          parentChannelId,
+          parentMessageId,
+        },
+      }
+    }
+
+    const fallbackName =
+      account.label && String(account.label).trim()
+        ? `${String(account.label).trim()} conversation`
+        : DEFAULT_THREAD_NAME
+    const threadName = threadNameFromContent(event.content, { fallback: fallbackName })
+
+    await this.outbox.enqueue({
+      operationId,
+      accountId: event.accountId,
+      operationType: 'createThread',
+      target: {
+        channelId: parentChannelId,
+        parentChannelId,
+        messageId: parentMessageId,
+      },
+      payload: {
+        threadName,
+        contentPreview: threadName.slice(0, 80),
+      },
+      correlationId: event.correlationId,
+      useNonce: false,
+    })
+
+    const receipt = await this._driveOperation(operationId, event.accountId)
+    if (!receipt || receipt.state !== 'delivered' || !receipt.discord_resource_id) {
+      const errMsg = receipt?.last_error?.message || receipt?.state || 'thread_create_failed'
+      // eslint-disable-next-line no-console
+      console.warn(
+        `discord bridge: thread_create failed account=${event.accountId} msg=${parentMessageId} state=${receipt?.state || 'missing'} err=${errMsg}`,
+      )
+      return {
+        ok: false,
+        reason: 'thread_create_failed',
+        message: String(errMsg),
+      }
+    }
+
+    const threadId = String(receipt.discord_resource_id)
+    // eslint-disable-next-line no-console
+    console.warn(
+      `discord bridge: thread_created account=${event.accountId} parent=${parentChannelId} msg=${parentMessageId} thread=${threadId}`,
+    )
+    return {
+      ok: true,
+      threadId,
+      event: {
+        ...event,
+        channelId: threadId,
+        threadId,
+        parentChannelId,
+        parentMessageId,
+      },
     }
   }
 
@@ -570,12 +698,7 @@ export class DiscordSessionBridge {
     if (!agent) {
       this.handles.delete(sessionId)
       try {
-        const resumeOpts = {
-          resumeSessionId: sessionId,
-          ...(extras.agentOptions ? { agentOptions: extras.agentOptions } : {}),
-          ...(extras.setup ? { setup: extras.setup } : {}),
-        }
-        handle = await this.agents.resume(resumeOpts)
+        handle = await this.agents.resume({ resumeSessionId: sessionId })
         this.handles.set(sessionId, handle)
         agent = handle?.agent || null
         this._attachOutput(sessionId, event)
@@ -621,10 +744,17 @@ export class DiscordSessionBridge {
       return { ok: false, reason: 'agent_unavailable', sessionId }
     }
 
+    // Outbound always targets the bound conversation surface (thread id when threaded).
+    // Inaugural dispatcher uses the launcher MESSAGE_CREATE id — do not reply-reference
+    // that parent message inside the thread (message lives in the launcher channel).
+    const inauguralFromLauncher =
+      Boolean(event.threadId) &&
+      Boolean(event.parentMessageId) &&
+      String(event.messageId) === String(event.parentMessageId)
     this.deliveryTargets.set(sessionId, {
       accountId: event.accountId,
       channelId: event.channelId,
-      replyTo: event.messageId,
+      replyTo: inauguralFromLauncher ? undefined : event.messageId,
       correlationId,
     })
 

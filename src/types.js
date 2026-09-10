@@ -52,6 +52,8 @@
  *   guildId?: string,
  *   channelId: string,
  *   threadId?: string,
+ *   parentChannelId?: string,
+ *   parentMessageId?: string,
  *   userId: string,
  *   messageId: string,
  *   content: string,

@@ -5,7 +5,7 @@
  * Account config → plugin accounts ledger (SSOT).
  */
 
-import { normalizeAccountConfig, normalizeAgentPresetId, scopeSummary } from './config.js'
+import { normalizeAccountConfig, normalizeAgentPresetId, normalizeConversationMode, scopeSummary } from './config.js'
 import { credentialSecretName, validateAccountId, normalizeSnowflakeList } from './secret-ref.js'
 import { INTENT_OPTIONS } from './intents.js'
 
@@ -176,6 +176,7 @@ export function createDiscordAccountsService(deps) {
       label: account.label || accountId,
       enabled: Boolean(account.enabled),
       agentPreset: account.agentPreset || null,
+      conversationMode: account.conversationMode || 'channel',
       credentials: {
         configured,
         ref, // admin Settings may show reference (Secrets Boundary consistent)
@@ -283,6 +284,7 @@ export function createDiscordAccountsService(deps) {
    *   label?: string,
    *   enabled?: boolean,
    *   agentPreset?: string | null,
+   *   conversationMode?: 'channel'|'thread_per_conversation',
    *   intents?: string[],
    *   allowedGuilds?: string[],
    *   allowAllGuilds?: boolean,
@@ -301,6 +303,7 @@ export function createDiscordAccountsService(deps) {
     const token = input.token != null ? String(input.token) : ''
     const ref = credentialSecretName(id)
     const agentPreset = await assertAgentPresetAssignable(input.agentPreset)
+    const conversationMode = normalizeConversationMode(input.conversationMode)
 
     // Reject duplicates before touching the vault (do not clobber existing secrets).
     if (configStore.snapshot().accounts[id]) {
@@ -312,6 +315,7 @@ export function createDiscordAccountsService(deps) {
       enabled: input.enabled,
       credentials: ref,
       agentPreset,
+      conversationMode,
       intents: input.intents,
       allowedGuilds: input.allowedGuilds,
       allowAllGuilds: input.allowAllGuilds,
@@ -376,6 +380,12 @@ export function createDiscordAccountsService(deps) {
       agentPresetPatch = await assertAgentPresetAssignable(patch.agentPreset)
     }
 
+    let conversationModePatch
+    const hasConversationMode = Object.prototype.hasOwnProperty.call(patch, 'conversationMode')
+    if (hasConversationMode) {
+      conversationModePatch = normalizeConversationMode(patch.conversationMode)
+    }
+
     let updated
     await configStore.withLock((data) => {
       const existing = data.accounts[id]
@@ -386,6 +396,7 @@ export function createDiscordAccountsService(deps) {
         ...existing,
         ...patch,
         ...(hasAgentPreset ? { agentPreset: agentPresetPatch } : {}),
+        ...(hasConversationMode ? { conversationMode: conversationModePatch } : {}),
         credentials: existing.credentials || credentialSecretName(id),
         dm: patch.dm ? { ...existing.dm, ...patch.dm } : existing.dm,
       })
@@ -585,6 +596,18 @@ export function createDiscordAccountsService(deps) {
       secret_name_format: 'DISCORD_<ACCOUNT_ID>_BOT_TOKEN',
       account_id_pattern: '^[a-z][a-z0-9_]{0,47}$',
       agent_preset_pattern: '^[a-z0-9][a-z0-9-]*$',
+      conversation_modes: [
+        {
+          id: 'channel',
+          label: 'Channel session',
+          hint: 'All allowed messages in the channel reuse one DSH session.',
+        },
+        {
+          id: 'thread_per_conversation',
+          label: 'Thread per conversation',
+          hint: 'Each new top-level message starts a Discord thread and a new DSH session.',
+        },
+      ],
       agent_presets: {
         enumerated: presetsEnumerated,
         source: presetsEnumeration,

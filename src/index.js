@@ -39,13 +39,16 @@ export {
   normalizePluginConfig,
   normalizeAccountConfig,
   normalizeAgentPresetId,
+  normalizeConversationMode,
   authorizeInbound,
   scopeSummary,
   DEFAULT_CONFIG,
   DEFAULT_ACCOUNT,
   AGENT_PRESET_ID_RE,
+  CONVERSATION_MODES,
 } from './config.js'
 export { buildBindingIdentity, toExternalIdentity } from './binding.js'
+export { threadNameFromContent, DEFAULT_THREAD_NAME, DISCORD_THREAD_NAME_MAX } from './thread-name.js'
 export { createDiscordUserMessage, buildFollowupMessage } from './message-source.js'
 export { COMPONENT_KINDS, isComponentNode } from './types.js'
 export { createDeliveryOutbox } from './outbox/index.js'

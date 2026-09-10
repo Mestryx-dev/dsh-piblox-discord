@@ -123,10 +123,25 @@ Content hash is **not** primary identity.
 ### Ordering (LOCKED)
 
 ```text
-normalize → authorize → dedupe claim → binding/session → agent.followup → complete
+normalize → authorize → dedupe claim
+  → [optional] createThread reconcile (thread_per_conversation launcher)
+  → binding/session → agent.followup → complete
 ```
 
 Authorize precedes claim so denied events are not stored.
+
+Do not mark launcher inbound `completed` until thread is established (when required) and binding/session dispatch is accepted.
+
+### Thread create reliability (IMPLEMENTED)
+
+| Case | Behaviour |
+|---|---|
+| Thread create fails after claim | No ConversationBinding / no DSH session; claim stays leased for retry |
+| Thread created, crash before binding | Retry reuses outbox `thread:create:<acct>:<parent_message_id>` receipt / Discord starter thread — no duplicate thread |
+| Archived thread | Binding/session durable; inbound reuse same session; outbound may fail cleanly if Discord rejects send |
+| Missing binding on allowed parent thread | Create binding/session for that thread (fail closed if parent unknown) |
+
+Operation identity for thread create: `account_id + parent_message_id` (durable outbox `operation_id`).
 
 ### Crash semantics (LOCKED)
 
