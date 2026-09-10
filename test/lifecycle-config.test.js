@@ -16,7 +16,13 @@ import { join } from 'node:path'
 describe('plugin lifecycle', () => {
   it('exports Cordis name and inject contract', () => {
     assert.equal(name, 'dsh-piblox-discord')
-    assert.deepEqual(inject, ['conversationBinding', 'agents', 'secrets'])
+    assert.deepEqual(inject, [
+      'conversationBinding',
+      'agents',
+      'secrets',
+      'agentPresets',
+      'agentDefaultModel',
+    ])
   })
 
   it('loads and unloads with zero accounts', async () => {

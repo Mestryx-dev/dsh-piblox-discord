@@ -26,19 +26,24 @@ import { registerDiscordHttpRoutes } from './http-accounts.js'
 import { credentialSecretName } from './secret-ref.js'
 
 export const name = 'dsh-piblox-discord'
-/** Bridge + credential plane (ADR-0012) — secrets required for token write/resolve. */
-export const inject = ['conversationBinding', 'agents', 'secrets']
+/** Bridge + credential plane (ADR-0012) — secrets required for token write/resolve.
+ * agentPresets required for new-session mint (webhook-parity); soft-get was silently
+ * unavailable and failed closed before dedupe claim with no stdout evidence.
+ */
+export const inject = ['conversationBinding', 'agents', 'secrets', 'agentPresets', 'agentDefaultModel']
 
 export { FakeTransport, TransportError } from './transport/fake.js'
 export { DiscordJsTransport, normalizeMessageCreate, toDiscordMessageBody, LIVE_SMOKE_INTENT_IDS, resolveGatewayIntents } from './transport/discordjs.js'
-export { DiscordSessionBridge, mintDiscordSessionId, extractAssistantText } from './bridge.js'
+export { DiscordSessionBridge, mintDiscordSessionId, extractAssistantText, resolveAgentFace, buildDiscordCreateAgentExtras, prepareDiscordSessionCreate, DEFAULT_DISPATCH_TIMEOUT_MS } from './bridge.js'
 export {
   normalizePluginConfig,
   normalizeAccountConfig,
+  normalizeAgentPresetId,
   authorizeInbound,
   scopeSummary,
   DEFAULT_CONFIG,
   DEFAULT_ACCOUNT,
+  AGENT_PRESET_ID_RE,
 } from './config.js'
 export { buildBindingIdentity, toExternalIdentity } from './binding.js'
 export { createDiscordUserMessage, buildFollowupMessage } from './message-source.js'
@@ -150,6 +155,10 @@ export function createDiscordProvider(deps, config = {}) {
     accounts: liveConfig.accounts,
     observability: deps.observability,
     createUserMessage: deps.createUserMessage,
+    agentPresets: deps.agentPresets,
+    agentDefaultModel: deps.agentDefaultModel,
+    sessionCwd: bootCfg.sessionCwd || deps.sessionCwd,
+    dispatchTimeoutMs: bootCfg.dispatchTimeoutMs ?? deps.dispatchTimeoutMs,
     onSessionEvent: deps.onSessionEvent,
     onInteractionIntent: deps.onInteractionIntent,
     logger: deps.logger,
@@ -186,6 +195,7 @@ export function createDiscordProvider(deps, config = {}) {
     secrets: deps.secrets || null,
     transport,
     outbox,
+    agentPresets: deps.agentPresets || null,
     logger: deps.logger,
     onConfigChanged: applyLiveConfig,
     liveGatewayConnected: (accountId) =>
@@ -328,10 +338,16 @@ export function apply(ctx, config = {}) {
   }
 
   const get = (key) => (typeof ctx.get === 'function' ? ctx.get(key) : undefined)
-  // Soft-resolve optional services — never access ctx.observability as a property
-  // without inject (Cordis throws "cannot get property without inject").
+  // Soft-resolve optional services — never access as a property without inject
+  // (Cordis throws "cannot get property without inject").
   const observability = get('observability')
   const createUserMessage = get('createUserMessage')
+  // Hard-injected (see `inject`) — webhook-parity session mint.
+  const agentPresets = ctx.agentPresets
+  const agentDefaultModel = ctx.agentDefaultModel
+  if (!agentPresets || typeof agentPresets.resolve !== 'function' || typeof agentPresets.mount !== 'function') {
+    throw new Error('dsh-piblox-discord: requires agentPresets service (resolve + mount)')
+  }
 
   const provider = createDiscordProvider(
     {
@@ -340,6 +356,8 @@ export function apply(ctx, config = {}) {
       secrets,
       observability,
       createUserMessage,
+      agentPresets,
+      agentDefaultModel,
       onSessionEvent: (sessionId, listener) => {
         return ctx.on('session/event', (session, event) => {
           const sid = String(session?.id ?? session?.sessionId ?? '')

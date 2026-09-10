@@ -5,7 +5,7 @@
  * Account config → plugin accounts ledger (SSOT).
  */
 
-import { normalizeAccountConfig, scopeSummary } from './config.js'
+import { normalizeAccountConfig, normalizeAgentPresetId, scopeSummary } from './config.js'
 import { credentialSecretName, validateAccountId, normalizeSnowflakeList } from './secret-ref.js'
 import { INTENT_OPTIONS } from './intents.js'
 
@@ -31,6 +31,11 @@ import { INTENT_OPTIONS } from './intents.js'
  *   },
  *   transport?: { isAccountRunning(id: string): boolean, startAccount?: Function, stopAccount?: Function },
  *   outbox?: { isAccountIsolated?(id: string): boolean, clearAccountIsolation?(id: string): void },
+ *   agentPresets?: {
+ *     resolve?(id: string): Promise<any>,
+ *     remoteExportList?(): Promise<{ presets?: Array<{ id: string, name?: string, description?: string, broken?: string, isDefault?: boolean, trust?: string }> }>,
+ *     list?(): Promise<Array<{ id: string }>>,
+ *   },
  *   onConfigChanged?: (cfg: any) => void,
  *   liveGatewayConnected?: (accountId: string) => boolean,
  *   logger?: { info?: Function, warn?: Function, debug?: Function },
@@ -41,6 +46,7 @@ export function createDiscordAccountsService(deps) {
   const secrets = deps.secrets || null
   const transport = deps.transport || null
   const outbox = deps.outbox || null
+  const agentPresets = deps.agentPresets || null
   const onConfigChanged = deps.onConfigChanged || (() => {})
   const liveGatewayConnected = deps.liveGatewayConnected || (() => false)
   const logger = deps.logger
@@ -169,6 +175,7 @@ export function createDiscordAccountsService(deps) {
       account_id: accountId,
       label: account.label || accountId,
       enabled: Boolean(account.enabled),
+      agentPreset: account.agentPreset || null,
       credentials: {
         configured,
         ref, // admin Settings may show reference (Secrets Boundary consistent)
@@ -241,11 +248,41 @@ export function createDiscordAccountsService(deps) {
   }
 
   /**
+   * Optional: validate agentPreset against live ctx.agentPresets when available.
+   * Shape validation always runs via normalizeAgentPresetId.
+   * @param {unknown} raw
+   */
+  async function assertAgentPresetAssignable(raw) {
+    const id = normalizeAgentPresetId(raw)
+    if (!id) return undefined
+    if (typeof agentPresets?.resolve === 'function') {
+      try {
+        const preset = await agentPresets.resolve(id)
+        if (!preset || preset.broken) {
+          throw Object.assign(
+            new Error(`agentPreset not available: ${id}${preset?.broken ? ` (${preset.broken})` : ''}`),
+            { code: 'agent_preset_invalid' },
+          )
+        }
+        return String(preset.id || id)
+      } catch (err) {
+        if (err?.code === 'agent_preset_invalid') throw err
+        throw Object.assign(new Error(`agentPreset invalid: ${id}`), {
+          code: 'agent_preset_invalid',
+          cause: err,
+        })
+      }
+    }
+    return id
+  }
+
+  /**
    * @param {{
    *   accountId: string,
    *   token?: string,
    *   label?: string,
    *   enabled?: boolean,
+   *   agentPreset?: string | null,
    *   intents?: string[],
    *   allowedGuilds?: string[],
    *   allowAllGuilds?: boolean,
@@ -263,6 +300,7 @@ export function createDiscordAccountsService(deps) {
     validateOperatorIds(input)
     const token = input.token != null ? String(input.token) : ''
     const ref = credentialSecretName(id)
+    const agentPreset = await assertAgentPresetAssignable(input.agentPreset)
 
     // Reject duplicates before touching the vault (do not clobber existing secrets).
     if (configStore.snapshot().accounts[id]) {
@@ -273,6 +311,7 @@ export function createDiscordAccountsService(deps) {
       label: input.label,
       enabled: input.enabled,
       credentials: ref,
+      agentPreset,
       intents: input.intents,
       allowedGuilds: input.allowedGuilds,
       allowAllGuilds: input.allowAllGuilds,
@@ -331,6 +370,12 @@ export function createDiscordAccountsService(deps) {
     }
     validateOperatorIds(patch)
 
+    let agentPresetPatch
+    const hasAgentPreset = Object.prototype.hasOwnProperty.call(patch, 'agentPreset')
+    if (hasAgentPreset) {
+      agentPresetPatch = await assertAgentPresetAssignable(patch.agentPreset)
+    }
+
     let updated
     await configStore.withLock((data) => {
       const existing = data.accounts[id]
@@ -340,6 +385,7 @@ export function createDiscordAccountsService(deps) {
       const next = normalizeAccountConfig({
         ...existing,
         ...patch,
+        ...(hasAgentPreset ? { agentPreset: agentPresetPatch } : {}),
         credentials: existing.credentials || credentialSecretName(id),
         dm: patch.dm ? { ...existing.dm, ...patch.dm } : existing.dm,
       })
@@ -504,18 +550,57 @@ export function createDiscordAccountsService(deps) {
     }
   }
 
-  function meta() {
+  async function meta() {
+    /** @type {Array<{ id: string, name?: string, description?: string, broken?: string, isDefault?: boolean, trust?: string }>} */
+    let presets = []
+    let presetsEnumerated = false
+    let presetsEnumeration = 'unavailable'
+    if (typeof agentPresets?.remoteExportList === 'function') {
+      try {
+        const roster = await agentPresets.remoteExportList()
+        presets = Array.isArray(roster?.presets) ? roster.presets : []
+        presetsEnumerated = true
+        presetsEnumeration = 'remoteExportList'
+      } catch (err) {
+        logger?.warn?.(`discordAccounts.meta: agentPresets.remoteExportList failed: ${err}`)
+        presetsEnumeration = 'remoteExportList_failed'
+      }
+    } else if (typeof agentPresets?.list === 'function') {
+      try {
+        const listed = await agentPresets.list()
+        presets = (Array.isArray(listed) ? listed : []).map((row) =>
+          typeof row === 'string' ? { id: row } : { id: row?.id, name: row?.name, broken: row?.broken },
+        )
+        presetsEnumerated = true
+        presetsEnumeration = 'list'
+      } catch (err) {
+        logger?.warn?.(`discordAccounts.meta: agentPresets.list failed: ${err}`)
+        presetsEnumeration = 'list_failed'
+      }
+    }
+
     return {
       ok: true,
       intents: INTENT_OPTIONS,
       secret_name_format: 'DISCORD_<ACCOUNT_ID>_BOT_TOKEN',
       account_id_pattern: '^[a-z][a-z0-9_]{0,47}$',
+      agent_preset_pattern: '^[a-z0-9][a-z0-9-]*$',
+      agent_presets: {
+        enumerated: presetsEnumerated,
+        source: presetsEnumeration,
+        items: presets,
+        note: presetsEnumerated
+          ? 'Select a DSH agent preset id. Changing assignment applies to new bindings only; existing ConversationBinding sessions are not remounted.'
+          : 'Enumeration unavailable — enter a canonical DSH agent preset id manually (ctx.agentPresets). Fail-closed at session create if missing/invalid.',
+      },
       reload: RELOAD,
       fail_closed: {
         allowedGuilds_empty: 'deny_all',
         allowedChannels_empty: 'deny_all',
         allowedUsers_empty: 'deny_all',
         dm_allowedUsers_empty: 'deny_all',
+        agentPreset_missing: 'agent_preset_required',
+        agentPreset_invalid: 'agent_preset_invalid',
       },
     }
   }

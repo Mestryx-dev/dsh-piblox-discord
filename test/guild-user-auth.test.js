@@ -14,6 +14,7 @@ import {
   createDiscordProvider,
 } from '../src/index.js'
 import { createDeterministicAgents } from './helpers/deterministic-agents.js'
+import { createMockAgentPresets } from './helpers/mock-agent-presets.js'
 import { createConversationBindingForTest } from '../../dsh-conversation-binding/src/index.js'
 
 const SF_G = '123456789012345678'
@@ -132,17 +133,20 @@ describe('guild user denial before binding/session/followup', () => {
       {
         conversationBinding: binding,
         agents,
+        agentPresets: createMockAgentPresets(['standard']),
         logger: { info() {}, warn() {}, debug() {} },
       },
       {
         transport: 'fake',
         allowConnect: false,
+        sessionCwd: '/tmp/dsh-discord-test-cwd',
         accountsConfigPath: join(dir, 'accounts.json'),
         outboxPath: join(dir, 'outbox.json'),
         inboundDedupePath: join(dir, 'dedupe.json'),
         accounts: {
           lab: {
             enabled: true,
+            agentPreset: 'standard',
             allowedGuilds: [SF_G],
             allowedChannels: [SF_C],
             allowedUsers: [SF_U],

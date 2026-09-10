@@ -388,6 +388,13 @@ window.__ModuleLoader__.load({
         sectionDm: "Direct messages",
         sectionBehavior: "Behavior",
         advancedIntents: "Advanced intents",
+        agentPreset: "Agent preset",
+        agentPresetHint:
+          "DSH agent preset for new Discord sessions. Changing this does not remount existing ConversationBinding sessions.",
+        agentPresetManual:
+          "Preset enumeration unavailable — enter a canonical DSH agent preset id.",
+        agentPresetNone: "— not set (fail-closed)",
+        agentLine: "Agent",
         allowAllGuilds: "Allow all guilds",
         allowAllChannels: "Allow all channels",
         allowAllGuildUsers: "Allow all guild users",
@@ -642,6 +649,9 @@ window.__ModuleLoader__.load({
         listToLines(initial && initial.dm && initial.dm.allowedUsers),
       );
       const [ignoreBots, setIgnoreBots] = useState(initial ? initial.ignoreBots !== false : true);
+      const [agentPreset, setAgentPreset] = useState(
+        initial && initial.agentPreset ? String(initial.agentPreset) : "",
+      );
       const [intents, setIntents] = useState(
         new Set(
           (initial && initial.intents) ||
@@ -653,6 +663,9 @@ window.__ModuleLoader__.load({
 
       const partitioned = partitionIntents(meta.intents || []);
       const tokenConfigured = Boolean(initial && initial.credentials && initial.credentials.configured);
+      const presetMeta = (meta && meta.agent_presets) || {};
+      const presetItems = Array.isArray(presetMeta.items) ? presetMeta.items : [];
+      const presetsEnumerated = Boolean(presetMeta.enumerated);
 
       function toggleIntent(id) {
         setIntents((prev) => {
@@ -671,6 +684,7 @@ window.__ModuleLoader__.load({
           const body = {
             label: label || undefined,
             enabled,
+            agentPreset: agentPreset.trim() || null,
             intents: [...intents],
             allowAllGuilds,
             allowAllChannels,
@@ -786,6 +800,44 @@ window.__ModuleLoader__.load({
                   checked: enabled,
                   onChange: (ev) => setEnabled(ev.target.checked),
                   label: t("enable"),
+                }),
+                jsx(Field, {
+                  id: baseId + "-agentPreset",
+                  label: t("agentPreset"),
+                  hint: presetsEnumerated ? t("agentPresetHint") : t("agentPresetManual"),
+                  children: presetsEnumerated
+                    ? jsxs("select", {
+                        id: baseId + "-agentPreset",
+                        value: agentPreset,
+                        onChange: (ev) => setAgentPreset(ev.target.value),
+                        style: css.input,
+                        children: [
+                          jsx("option", { value: "", children: t("agentPresetNone") }),
+                          ...presetItems
+                            .filter((row) => row && row.id && !row.broken)
+                            .map((row) =>
+                              jsx(
+                                "option",
+                                {
+                                  value: row.id,
+                                  children:
+                                    (row.name ? row.name + " (" + row.id + ")" : row.id) +
+                                    (row.isDefault ? " · default" : ""),
+                                },
+                                row.id,
+                              ),
+                            ),
+                        ],
+                      })
+                    : jsx("input", {
+                        id: baseId + "-agentPreset",
+                        value: agentPreset,
+                        placeholder: "vega",
+                        autoComplete: "off",
+                        spellCheck: false,
+                        onChange: (ev) => setAgentPreset(ev.target.value),
+                        style: css.input,
+                      }),
                 }),
                 isNew
                   ? jsx(Field, {
@@ -1098,6 +1150,10 @@ window.__ModuleLoader__.load({
           jsxs("div", {
             style: css.metaRow,
             children: [
+              jsx("span", { style: css.metaKey, children: t("agentLine") }),
+              jsx("span", {
+                children: item.agentPreset || t("agentPresetNone"),
+              }),
               jsx("span", { style: css.metaKey, children: t("tokenLine") }),
               jsx("span", {
                 children: configured ? t("tokenConfigured") : t("tokenMissing"),

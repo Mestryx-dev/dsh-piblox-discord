@@ -22,6 +22,8 @@ import { normalizeIntents } from './intents.js'
  *   enabled?: boolean,
  *   label?: string,
  *   credentials?: string,
+ *   agentPreset?: string,
+
  *   intents?: string[],
  *   allowedGuilds?: string[],
  *   allowedChannels?: string[],
@@ -40,6 +42,8 @@ import { normalizeIntents } from './intents.js'
  *   transport?: 'fake'|'discordjs',
  *   allowConnect?: boolean,
  *   accounts?: Record<string, AccountConfig>,
+ *   sessionCwd?: string,
+ *   dispatchTimeoutMs?: number,
  * }} PluginConfig
  */
 
@@ -47,6 +51,8 @@ export const DEFAULT_ACCOUNT = Object.freeze({
   enabled: true,
   label: undefined,
   credentials: undefined,
+  /** unset = fail-closed for AgentLoop (no silent default agent) */
+  agentPreset: undefined,
   intents: ['Guilds', 'GuildMessages', 'DirectMessages', 'MessageContent'],
   allowedGuilds: [],
   allowedChannels: [],
@@ -63,10 +69,32 @@ export const DEFAULT_ACCOUNT = Object.freeze({
   proactiveTargets: Object.freeze({}),
 })
 
+/** Matches `@deepseek-ai/dsh-agent-presets` PRESET_ID. */
+export const AGENT_PRESET_ID_RE = /^[a-z0-9][a-z0-9-]*$/
+
+/**
+ * Normalize optional agent preset id. Empty → undefined (fail-closed at runtime).
+ * @param {unknown} raw
+ * @returns {string | undefined}
+ */
+export function normalizeAgentPresetId(raw) {
+  if (raw == null) return undefined
+  const id = String(raw).trim()
+  if (!id) return undefined
+  if (!AGENT_PRESET_ID_RE.test(id)) {
+    throw new TypeError(`dsh-piblox-discord: invalid agentPreset (${id})`)
+  }
+  return id
+}
+
 export const DEFAULT_CONFIG = Object.freeze({
   transport: 'fake',
   allowConnect: false,
   accounts: Object.freeze({}),
+  /** Absolute workspace cwd for Discord-minted sessions (DSH CreateAgentOptions.meta.cwd). */
+  sessionCwd: undefined,
+  /** Bound for create/resume/followup admission (ms). */
+  dispatchTimeoutMs: 60_000,
 })
 
 /**
@@ -98,6 +126,7 @@ export function normalizeAccountConfig(raw = {}) {
     ...raw,
     label,
     credentials: raw.credentials != null ? String(raw.credentials) : undefined,
+    agentPreset: normalizeAgentPresetId(raw.agentPreset),
     allowedGuilds: Array.isArray(raw.allowedGuilds)
       ? raw.allowedGuilds.map(String)
       : [...DEFAULT_ACCOUNT.allowedGuilds],
@@ -150,7 +179,13 @@ export function normalizePluginConfig(raw = {}) {
   const transport = raw.transport === 'discordjs' ? 'discordjs' : 'fake'
   // Live Gateway login is opt-in only — never default true.
   const allowConnect = Boolean(raw.allowConnect)
-  return { transport, allowConnect, accounts }
+  const sessionCwd =
+    raw.sessionCwd != null && String(raw.sessionCwd).trim() ? String(raw.sessionCwd).trim() : undefined
+  const dispatchTimeoutMs =
+    raw.dispatchTimeoutMs != null && Number.isFinite(Number(raw.dispatchTimeoutMs))
+      ? Number(raw.dispatchTimeoutMs)
+      : DEFAULT_CONFIG.dispatchTimeoutMs
+  return { transport, allowConnect, accounts, sessionCwd, dispatchTimeoutMs }
 }
 
 /**

@@ -19,17 +19,20 @@ import {
   FakeTransport,
 } from '../src/index.js'
 import { createDeterministicAgents } from './helpers/deterministic-agents.js'
+import { createMockAgentPresets } from './helpers/mock-agent-presets.js'
 import { classifyTransportError } from '../src/errors.js'
 
 const ACCOUNTS = {
   account_alpha: {
     enabled: true,
+    agentPreset: 'standard',
     allowAllGuilds: true,
     allowAllChannels: true,
     allowAllUsers: true,
   },
   account_beta: {
     enabled: true,
+    agentPreset: 'standard',
     allowAllGuilds: true,
     allowAllChannels: true,
     allowAllUsers: true,
@@ -43,7 +46,7 @@ function setup(extra = {}) {
     storePath: join(dir, 'bindings.json'),
   })
   let followups = 0
-  const agents = createDeterministicAgents()
+  const agents = createDeterministicAgents(extra.agentsOptions || {})
   const create = agents.create.bind(agents)
   agents.create = async (args) => {
     const handle = await create(args)
@@ -69,12 +72,14 @@ function setup(extra = {}) {
     return handle
   }
   const transport = new FakeTransport()
+  const agentPresets = createMockAgentPresets(['standard', 'vega', 'minimal'])
   const provider = createDiscordProvider(
     {
       conversationBinding,
       agents,
       transport,
       clock,
+      agentPresets,
       onSessionEvent: (sessionId, listener) =>
         agents.onEvent((sid, event) => {
           if (String(sid) === String(sessionId)) return listener({ id: sid }, event)
@@ -82,6 +87,7 @@ function setup(extra = {}) {
     },
     {
       accounts: ACCOUNTS,
+      sessionCwd: '/tmp/dsh-discord-test-cwd',
       outboxPath: join(dir, 'outbox.json'),
       inboundDedupePath: join(dir, 'inbound-dedupe.json'),
       accountsConfigPath: join(dir, 'discord-accounts.json'),
@@ -193,6 +199,182 @@ describe('transport closure — outbound via outbox', () => {
     // One send/reply op for the turn (chunks coalesced until assistant/message)
     assert.equal(ops.filter((o) => o.operation_type === 'replyMessage' || o.operation_type === 'sendMessage').length, 1)
     assert.match(ctx.transport.outbound.at(-1).payload.content, /STREAMED/)
+  })
+
+  it('concurrent assistant/message + turn/end → exactly one send (no send:2 duplicate)', async () => {
+    // Tear down default ctx; rebuild with Cordis-like non-awaited session events.
+    rmSync(ctx.dir, { recursive: true, force: true })
+    ctx = setup({ agentsOptions: { concurrentFlush: true, replyFn: () => 'ONE_FINAL' } })
+    await ctx.provider.start()
+
+    await ctx.transport.injectMessage({
+      accountId: 'account_alpha',
+      channelId: 'c-race',
+      guildId: 'g1',
+      userId: 'u1',
+      messageId: 'm-race',
+      content: 'ping',
+    })
+
+    const sends = ctx.provider.outbox
+      .listOperations({ accountId: 'account_alpha' })
+      .filter((o) => o.operation_type === 'replyMessage' || o.operation_type === 'sendMessage')
+    assert.equal(sends.length, 1, `expected 1 send, got ${sends.map((o) => o.operation_id).join(',')}`)
+    assert.equal(sends[0].operation_id.endsWith(':send:1'), true)
+    assert.equal(sends[0].state, 'delivered')
+    assert.match(ctx.transport.outbound.at(-1).payload.content, /ONE_FINAL/)
+  })
+
+  it('multi-turn same session: turn2 sends new Discord message, never edits turn1', async () => {
+    await ctx.transport.injectMessage({
+      accountId: 'account_alpha',
+      channelId: 'c-multiturn',
+      guildId: 'g1',
+      userId: 'u1',
+      messageId: 'm-turn-1',
+      content: 'reply exactly: MSG_A',
+    })
+    await ctx.transport.injectMessage({
+      accountId: 'account_alpha',
+      channelId: 'c-multiturn',
+      guildId: 'g1',
+      userId: 'u1',
+      messageId: 'm-turn-2',
+      content: 'reply exactly: MSG_B',
+    })
+
+    const bindings = Object.values(ctx.conversationBinding.dump().bindings)
+    assert.equal(bindings.length, 1, 'same ConversationBinding')
+    const sid = bindings[0].session_id
+
+    const sends = ctx.provider.outbox
+      .listOperations({ accountId: 'account_alpha' })
+      .filter((o) => o.operation_type === 'replyMessage' || o.operation_type === 'sendMessage')
+    assert.equal(sends.length, 2)
+    const [a, b] = sends
+    assert.notEqual(a.discord_resource_id, b.discord_resource_id)
+    assert.match(a.payload.content, /MSG_A/)
+    assert.match(b.payload.content, /MSG_B/)
+    assert.equal(a.target.messageId, 'm-turn-1')
+    assert.equal(b.target.messageId, 'm-turn-2')
+
+    const edits = ctx.provider.outbox
+      .listOperations({ accountId: 'account_alpha' })
+      .filter((o) => o.operation_type === 'editMessage')
+    assert.equal(
+      edits.filter((o) => o.target?.messageId === a.discord_resource_id).length,
+      0,
+      'turn2 must not edit turn1 Discord message',
+    )
+
+    const stream = ctx.provider.bridge.streams.get(sid)
+    assert.equal(stream.sentId, undefined, 'turn/end clears mutable sentId')
+    assert.equal(stream.turnOpen, false)
+    assert.equal(ctx.getFollowups(), 2)
+  })
+
+  it('within one turn, second flush edits same Discord message', async () => {
+    rmSync(ctx.dir, { recursive: true, force: true })
+    ctx = setup({
+      agentsOptions: { streamEditWithinTurn: true, replyFn: () => 'HELLO_WORLD' },
+    })
+    await ctx.provider.start()
+
+    await ctx.transport.injectMessage({
+      accountId: 'account_alpha',
+      channelId: 'c-inedit',
+      guildId: 'g1',
+      userId: 'u1',
+      messageId: 'm-inedit',
+      content: 'ping',
+    })
+
+    const sends = ctx.provider.outbox
+      .listOperations({ accountId: 'account_alpha' })
+      .filter((o) => o.operation_type === 'replyMessage' || o.operation_type === 'sendMessage')
+    const edits = ctx.provider.outbox
+      .listOperations({ accountId: 'account_alpha' })
+      .filter((o) => o.operation_type === 'editMessage')
+    assert.equal(sends.length, 1)
+    assert.ok(edits.length >= 1)
+    assert.equal(edits[0].target.messageId, sends[0].discord_resource_id)
+    assert.match(ctx.transport.outbound.at(-1).payload.content, /HELLO_WORLD/)
+  })
+
+  it('empty then text turn on same session: second turn sends new message', async () => {
+    let n = 0
+    rmSync(ctx.dir, { recursive: true, force: true })
+    ctx = setup({
+      agentsOptions: {
+        replyFn: () => {
+          n += 1
+          return n === 1 ? '' : 'AFTER_EMPTY'
+        },
+      },
+    })
+    await ctx.provider.start()
+
+    await ctx.transport.injectMessage({
+      accountId: 'account_alpha',
+      channelId: 'c-empty2',
+      guildId: 'g1',
+      userId: 'u1',
+      messageId: 'm-empty-1',
+      content: 'noop',
+    })
+    await ctx.transport.injectMessage({
+      accountId: 'account_alpha',
+      channelId: 'c-empty2',
+      guildId: 'g1',
+      userId: 'u1',
+      messageId: 'm-empty-2',
+      content: 'go',
+    })
+
+    const sends = ctx.provider.outbox
+      .listOperations({ accountId: 'account_alpha' })
+      .filter((o) => o.operation_type === 'replyMessage' || o.operation_type === 'sendMessage')
+    assert.equal(sends.length, 1)
+    assert.match(sends[0].payload.content, /AFTER_EMPTY/)
+    assert.equal(sends[0].target.messageId, 'm-empty-2')
+    const sid = Object.values(ctx.conversationBinding.dump().bindings)[0].session_id
+    assert.equal(ctx.provider.bridge.streams.get(sid).sentId, undefined)
+  })
+
+  it('parallel flushOutbound while dirty collapses to one Discord send', async () => {
+    await ctx.transport.injectMessage({
+      accountId: 'account_alpha',
+      channelId: 'c-parallel',
+      guildId: 'g1',
+      userId: 'u1',
+      messageId: 'm-parallel',
+      content: 'reply exactly: BASE',
+    })
+    const sid = Object.values(ctx.conversationBinding.dump().bindings)[0].session_id
+    const bridge = ctx.provider.bridge
+    const stream = bridge.streams.get(sid)
+    assert.ok(stream)
+    // New turn on same session: reset sentId and use a fresh flushSeq namespace.
+    stream.buffer = 'PARALLEL_ONLY'
+    stream.dirty = true
+    stream.sentId = undefined
+    stream.flushSeq = 100
+
+    await Promise.all([
+      bridge.flushOutbound(sid, { final: true }),
+      bridge.flushOutbound(sid, { final: true }),
+      bridge.flushOutbound(sid, { final: true }),
+    ])
+
+    const sends = ctx.provider.outbox
+      .listOperations({ accountId: 'account_alpha' })
+      .filter(
+        (o) =>
+          (o.operation_type === 'replyMessage' || o.operation_type === 'sendMessage') &&
+          String(o.payload?.content || '').includes('PARALLEL_ONLY'),
+      )
+    assert.equal(sends.length, 1)
+    assert.match(sends[0].operation_id, /send:101$/)
   })
 
   it('429 on assistant output retries without failing DSH turn', async () => {

@@ -47,10 +47,10 @@ export function resolveGatewayIntents(djs, intentIds) {
  */
 export function normalizeMessageCreate(accountId, message) {
   const channel = message?.channel
-  const isDm = Boolean(
-    channel?.isDMBased?.() === true ||
-      (message?.guildId == null && message?.guild == null),
-  )
+  // Fail closed on DM classification: only treat as DM when positively identified.
+  // Do NOT infer DM merely because guildId/channel cache is missing (that silently
+  // routes guild MESSAGE_CREATE into dm_disabled before dedupe claim).
+  const isDm = Boolean(channel?.isDMBased?.() === true)
   const threadId =
     typeof channel?.isThread === 'function'
       ? channel.isThread()
@@ -345,6 +345,16 @@ export class DiscordJsTransport {
     client.on?.('messageCreate', (message) => {
       void this._dispatchMessageCreate(accountId, message)
     })
+
+    // Diagnostic: prove whether Gateway delivers MESSAGE_CREATE at all (stdout; no token/content).
+    client.on?.('raw', (packet) => {
+      if (packet?.t !== 'MESSAGE_CREATE') return
+      const d = packet.d || {}
+      // eslint-disable-next-line no-console
+      console.warn(
+        `discordjs: raw MESSAGE_CREATE account=${accountId} id=${d.id || ''} channel=${d.channel_id || ''} guild=${d.guild_id || ''} author=${d.author?.id || ''} handlers=${this.handlers.length}`,
+      )
+    })
   }
 
   /**
@@ -352,6 +362,10 @@ export class DiscordJsTransport {
    * @param {any} message
    */
   async _dispatchMessageCreate(accountId, message) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `discordjs: messageCreate account=${accountId} id=${message?.id || ''} channel=${message?.channelId || ''} guild=${message?.guildId || ''} author=${message?.author?.id || ''} handlers=${this.handlers.length}`,
+    )
     let event
     try {
       event = normalizeMessageCreate(accountId, message)
@@ -359,13 +373,23 @@ export class DiscordJsTransport {
       this.logger?.warn?.(
         `discordjs: normalize failed account=${accountId} err=${err instanceof Error ? err.message : err}`,
       )
+      // eslint-disable-next-line no-console
+      console.warn(`discordjs: normalize failed account=${accountId}`)
       return
+    }
+    if (this.handlers.length === 0) {
+      // eslint-disable-next-line no-console
+      console.warn(`discordjs: DROP messageCreate — no inbound handlers account=${accountId}`)
     }
     for (const handler of [...this.handlers]) {
       try {
         await handler(event)
       } catch (err) {
         this.logger?.warn?.(
+          `discordjs: inbound handler error account=${accountId} err=${err instanceof Error ? err.message : err}`,
+        )
+        // eslint-disable-next-line no-console
+        console.warn(
           `discordjs: inbound handler error account=${accountId} err=${err instanceof Error ? err.message : err}`,
         )
       }

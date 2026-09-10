@@ -10,19 +10,40 @@
 4. **Account labels are opaque aliases** — not product branch names in code.
 5. **Dashboard config == runtime plugin config** — SSOT = `discord-accounts.json` ledger.
 6. **Guild user auth ≠ DM user auth** — top-level `allowAllUsers` / `allowedUsers` gate guild MESSAGE_CREATE; `dm.*` remains independent.
+7. **AgentLoop target = DSH agent preset** — per-account `agentPreset` (canonical `ctx.agentPresets` id). Fail-closed when missing/invalid on **new** session mint. Discord stays generic (no product-specific prompts/tools in this plugin).
 
 ## Operator workflow (LOCKED)
 
 ```text
-Settings → Discord → Add account → paste bot token → Save
+Settings → Discord → Add account → paste bot token → assign Agent preset → Save
   → token stored by dsh-piblox-secrets as DISCORD_<ACCOUNT_ID>_BOT_TOKEN
-  → account config stores only the reference
+  → account config stores only the reference + agentPreset id
 
 Settings → Secrets
   → generic vault UI (unchanged)
 ```
 
 Discord Settings is a **domain facade**, not a second vault.
+
+### Agent preset (LOCKED)
+
+| Field | Meaning |
+|---|---|
+| `agentPreset` | Canonical DSH preset id (`meta.agentPreset` / `ctx.agentPresets.mount`) |
+| UI | Settings → Discord → General → **Agent preset** (selector from `remoteExportList` when available) |
+
+**Session semantics:**
+
+- Existing `ConversationBinding` → resume same session (changing `agentPreset` does **not** remount it).
+- No binding → resolve+mount configured preset → `agents.create` → bind → followup.
+- Missing / invalid / unavailable presets → `agent_preset_required` / `agent_preset_invalid` / `agent_presets_unavailable` (no silent default agent).
+
+**Orthogonal (not the preset):**
+
+| Knob | Role |
+|---|---|
+| plugin `sessionCwd` | `CreateAgentOptions.meta.cwd` (workspace; required for Discord mint) |
+| `ctx.agentDefaultModel` | LLM route (`agentOptions`); same as WebUI/webhook model selection |
 
 ## Secret references (LOCKED)
 
@@ -48,6 +69,7 @@ discord:
       enabled: true
       label: Lab bot
       credentials: DISCORD_LAB_BOT_TOKEN   # reference only
+      agentPreset: vega                   # canonical DSH agent preset id (required for new AgentLoop sessions)
       intents:
         - Guilds
         - GuildMessages
@@ -83,6 +105,7 @@ There is **no** Discord Administrator / permission-bit implicit bypass.
 {
   "account_id": "lab",
   "enabled": true,
+  "agentPreset": "vega",
   "credentials": { "configured": true, "ref": "DISCORD_LAB_BOT_TOKEN" },
   "status": "stopped",
   "scope_summary": { "guilds": "deny_all", "channels": "deny_all", "users": "deny_all", "dm": "disabled" }
@@ -101,7 +124,7 @@ Never returns `token`, materialized secrets, or canary values.
 | DELETE | `/api/discord/accounts/:id` | Delete config (`?deleteSecret=true` optional) — admin session required |
 | POST | `/api/discord/accounts/:id/credential` | Set/replace token — admin session required |
 | DELETE | `/api/discord/accounts/:id/credential` | Remove token — admin session required |
-| GET | `/api/discord/meta` | Intents catalog + fail-closed hints |
+| GET | `/api/discord/meta` | Intents catalog + agent preset roster (when enumerable) + fail-closed hints |
 
 **PLUGIN_HTTP_ADMIN_AUTH = PLUGIN_REQUIRED.** `dsh-host-webserver` has no server-wide auth; longer plugin prefixes bypass Connection’s `/api` bridge. Mutations use `ctx.connection.requestRejection` (fail closed 503 if Connection missing). Same-origin remains CSRF defense.
 

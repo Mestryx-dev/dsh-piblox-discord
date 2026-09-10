@@ -15,7 +15,8 @@ State ownership mixes **OBSERVED** Core owners and **IMPLEMENTED** plugin transp
 | Bot token values | `dsh-piblox-secrets` (`secrets`) | yes | OBSERVED credential SSOT |
 | Conversation ↔ session binding | `conversationBinding` | yes | OBSERVED — **no parallel store** |
 | Discord channel/thread/message IDs | Discord + outbox `discord_resource_id` | ephemeral + refs | Platform truth is Discord |
-| Stream delivery (session → Discord message_id) | Bridge `streams` map | memory | Transport/render only — **not** a second ConversationBinding |
+| Stream delivery (per **turn** → Discord message_id) | Bridge `streams` map (`sentId` turn-scoped) | memory | Transport/render only — **not** a second ConversationBinding; cleared on `turn/end` |
+
 | Outbound delivery jobs | Plugin outbox (`discord-outbox.json`) | **yes (IMPLEMENTED)** | Survive crash mid-send |
 | Create Message `nonce` map | Outbox op + FakeTransport nonce index | yes | Discord-native idempotency (`enforce_nonce`) |
 | Durable operation IDs | Outbox `operation_id` | yes | Dedupe + receipts |
@@ -76,14 +77,32 @@ Atlas failure mode covered by `test/reliability.test.js` group case.
 ### Application outbound path (LOCKED)
 
 ```text
+turn/start → begin turn delivery window (clear mutable sentId)
 assistant/chunk → buffer only (coalesce)
 assistant/message | turn/end | flushOutbound → outbox.enqueue
+  → first flush this turn: send/reply (new Discord message)
+  → later dirty flush same turn: edit THAT message only
+turn/end → finalize: clear mutable sentId/buffer (keep durable outbox receipts)
 outbox.tick → transport.send|reply|edit
 ```
+
+**LOCKED:** `sentId` is **per-turn mutable delivery state**, never session-global response identity.
+
+**LOCKED:** ConversationBinding session reuse ≠ Discord message reuse.
+Same DSH session across turns MUST create a **new** Discord response each turn.
+Edits never cross turn boundaries.
 
 Proactive/tool surface: `provider.messages.sendMessage|replyMessage|editMessage` → same outbox.
 
 **Not allowed:** bridge / messages API → transport directly.
+
+### Restart / recovery boundary (LOCKED)
+
+| Situation | Behaviour |
+|---|---|
+| Process restart mid-turn | In-memory `streams` rebuilt empty; durable outbox recovers `sending`→`queued` by `operation_id` |
+| Process restart after turn completed | No second final send: outbox dedupe on `operation_id`; new turn starts with no `sentId` |
+| Do not | Re-hydrate `sentId` from prior turn's Discord message into the next turn window |
 
 ## 3. Inbound dedupe (IMPLEMENTED + LOCKED)
 

@@ -8,6 +8,7 @@ import { createDiscordProvider } from '../src/index.js'
 import { FakeTransport, TransportError } from '../src/transport/fake.js'
 import { DiscordJsTransport } from '../src/transport/discordjs.js'
 import { createDeterministicAgents } from './helpers/deterministic-agents.js'
+import { createMockAgentPresets } from './helpers/mock-agent-presets.js'
 import { COMPONENT_KINDS } from '../src/types.js'
 import { createDiscordUserMessage } from '../src/message-source.js'
 
@@ -17,6 +18,7 @@ function setup(accounts, extra = {}) {
     storePath: join(dir, 'bindings.json'),
   })
   const agents = createDeterministicAgents()
+  const agentPresets = extra.agentPresets || createMockAgentPresets(['standard', 'vega', 'minimal'])
   const transport = new FakeTransport()
   const emitted = []
   const observability = {
@@ -32,6 +34,7 @@ function setup(accounts, extra = {}) {
       agents,
       transport,
       observability,
+      agentPresets,
       clock: extra.clock,
       onSessionEvent: (sessionId, listener) =>
         agents.onEvent((sid, event) => {
@@ -40,6 +43,7 @@ function setup(accounts, extra = {}) {
     },
     {
       accounts,
+      sessionCwd: extra.sessionCwd || '/tmp/dsh-discord-test-cwd',
       outboxPath: join(dir, 'outbox.json'),
       inboundDedupePath: join(dir, 'inbound-dedupe.json'),
       accountsConfigPath: join(dir, 'discord-accounts.json'),
@@ -47,7 +51,7 @@ function setup(accounts, extra = {}) {
       inboundDedupeLeaseMs: extra.inboundDedupeLeaseMs,
     },
   )
-  return { dir, conversationBinding, agents, transport, provider, emitted }
+  return { dir, conversationBinding, agents, agentPresets, transport, provider, emitted }
 }
 
 describe('FakeTransport', () => {
@@ -106,6 +110,7 @@ describe('DSH bridge', () => {
     ctx = setup({
       account_alpha: {
         enabled: true,
+        agentPreset: 'standard',
         allowAllGuilds: true,
         allowAllChannels: true,
         allowAllUsers: true,
@@ -113,6 +118,7 @@ describe('DSH bridge', () => {
       },
       account_beta: {
         enabled: true,
+        agentPreset: 'standard',
         allowedGuilds: ['g-beta'],
         allowedChannels: ['c-beta'],
         allowAllUsers: true,
@@ -189,6 +195,8 @@ describe('DSH bridge', () => {
     const before = ctx.conversationBinding.resolve(identity)
     assert.ok(before)
     ctx.agents.dropHandle(before.session_id)
+    // Owner Handle must also be cleared (real DSH: create/resume Handle is not in get())
+    ctx.provider.bridge.handles.delete(before.session_id)
 
     await ctx.transport.injectMessage({
       accountId: 'account_alpha',

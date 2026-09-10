@@ -153,6 +153,8 @@ Evidence: `docs/subsystems/session.md`, `docs/subsystems/core.md`.
 
 **PROPOSED Discord adapter:** subscribe to `session/event` for the bound session; map committed `assistant/message` (+ optional coalesced progress from chunks) to outbound Discord delivery. Do not invent a parallel transcript store.
 
+**LOCKED (delivery):** mutable Discord `sentId` is **per-turn**, not per-session. `turn/start` opens a fresh delivery window; `turn/end` clears `sentId`. Session reuse via ConversationBinding must still produce a **new** Discord response each DSH turn. Intra-turn streaming may edit only that turn's message.
+
 ### SESSION FAILURE / RECOVERY (OBSERVED + PROPOSED adapter policy)
 
 | Situation | OBSERVED runtime | Adapter SHOULD (PROPOSED, aligns CB contract) |
@@ -221,13 +223,20 @@ async createSessionId() {
 ```text
 const { binding } = await conversationBinding.resolveOrCreate(identity, { createSessionId })
 const sessionId = binding.session_id
+// CRITICAL (dsh-agent 0.1.2-rc.1):
+//   agents.create/resume → AgentHandle { agent, dispose }
+//   agents.get(id)       → bare Agent (NOT a handle)
+// Never do: agents.get(id).agent.followup  → always undefined → silent agent_unavailable
+const owned = accountSessionRegistry.get(sessionId)          // Handle from create/resume
 const agent =
-  ctx.agents.get(sessionId)
+  owned?.agent
+  ?? ctx.agents.get(sessionId)
   ?? (await ctx.agents.resume({ resumeSessionId: sessionId, setup: … })).agent
 agent.followup(createUserMessage({
   content: [{ type: 'text', text: <normalized content> }],
   source: { kind: 'user' /* or a dedicated source kind if/when allowed */ },
 }))
+// followup is sync void (inbox wake). Do not await turn completion on the admission path.
 ```
 
 Source `kind` values are constrained by LLM message types — webhook uses `kind: 'webhook'`. Discord may use `kind: 'user'` initially (**PROPOSED** until a dedicated source kind exists upstream).
@@ -238,8 +247,12 @@ Source `kind` values are constrained by LLM message types — webhook uses `kind
 
 ```text
 discord.message.created                         [PROPOSED normalize]
+  → ConversationBinding.resolve                 [OBSERVED]
+  → (no binding) prepareDiscordSessionCreate    [OBSERVED webhook-parity]
+      account.agentPreset → agentPresets.resolve + mount
+      sessionCwd → meta.cwd · agentDefaultModel → agentOptions
   → ConversationBinding.resolveOrCreate         [OBSERVED]
-      → createSessionId → ctx.agents.create     [OBSERVED]  (first time only)
+      → createSessionId → ctx.agents.create     [OBSERVED]  (first time / remint only)
   → session_id
   → ctx.agents.get | ctx.agents.resume          [OBSERVED]
   → agent.followup(createUserMessage(…))        [OBSERVED]
@@ -247,6 +260,8 @@ discord.message.created                         [PROPOSED normalize]
   → session/event (assistant/chunk|message, tool/*, turn/*)  [OBSERVED]
   → Discord outbound adapter                    [PROPOSED]
 ```
+
+**Account → agent mapping (LOCKED):** Discord account field `agentPreset` stores the canonical DSH preset id. Changing assignment applies to **new** bindings / remints only — existing ConversationBinding sessions are not remounted.
 
 Parallel Host path (WebUI / API gateway — OBSERVED, not preferred for in-process plugin):
 
@@ -264,10 +279,10 @@ session.prompt → resolveAgent → followup
 | `agents` | **REQUIRED** | create / resume / get / followup |
 | `conversationBinding` | **REQUIRED** | binding SSOT |
 | `secrets` | **REQUIRED** | Discord token refs |
-| `agentPresets` | **OPTIONAL** | explicit preset targeting (webhook injects it) |
-| `agentDefaultModel` | **OPTIONAL** | default model selection |
+| `agentPresets` | **REQUIRED** | resolve / mount / standingKeyFor (new Discord session mint; fail-closed) |
+| `agentDefaultModel` | **REQUIRED** | LLM route (`agentOptions`); orthogonal to preset composition |
 | `permissionPresets` | **OPTIONAL** | session permission preset |
-| `workspaceRegistry` | **OPTIONAL** | workspace attach (webhook); cwd-only may suffice |
+| `workspaceRegistry` | **OPTIONAL** | workspace attach (webhook); Discord uses plugin `sessionCwd` → `meta.cwd` |
 | `sessionTitle` | **OPTIONAL** | human titles |
 | `observability` | **OPTIONAL** (recommended) | Core event bridge; soft-get OK if absent |
 | `tools` | **OPTIONAL** until registering `discord.*` tools | hard-inject when exposing tools (secrets pattern) |

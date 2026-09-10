@@ -10,12 +10,14 @@ import { createConversationBindingForTest } from '../../dsh-conversation-binding
 import { createDiscordProvider } from '../src/index.js'
 import { FakeTransport } from '../src/transport/fake.js'
 import { createDeterministicAgents } from './helpers/deterministic-agents.js'
+import { createMockAgentPresets } from './helpers/mock-agent-presets.js'
 
 const dir = mkdtempSync(join(tmpdir(), 'dsh-discord-smoke-'))
 const conversationBinding = createConversationBindingForTest({
   storePath: join(dir, 'bindings.json'),
 })
 const agents = createDeterministicAgents()
+const agentPresets = createMockAgentPresets(['standard'])
 const transport = new FakeTransport()
 
 const provider = createDiscordProvider(
@@ -23,6 +25,7 @@ const provider = createDiscordProvider(
     conversationBinding,
     agents,
     transport,
+    agentPresets,
     onSessionEvent: (sessionId, listener) =>
       agents.onEvent((sid, event) => {
         if (String(sid) === String(sessionId)) return listener({ id: sid }, event)
@@ -32,11 +35,13 @@ const provider = createDiscordProvider(
     accounts: {
       account_alpha: {
         enabled: true,
+        agentPreset: 'standard',
         allowAllGuilds: true,
         allowAllChannels: true,
         allowAllUsers: true,
       },
     },
+    sessionCwd: '/tmp/dsh-discord-test-cwd',
     outboxPath: join(dir, 'outbox.json'),
     inboundDedupePath: join(dir, 'inbound-dedupe.json'),
     accountsConfigPath: join(dir, 'discord-accounts.json'),

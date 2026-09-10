@@ -96,7 +96,7 @@ export function createDiscordHttpHandlers(opts) {
 
     try {
       if (parts[0] === 'meta' && (method === 'GET' || method === 'HEAD')) {
-        json(res, 200, accounts.meta())
+        json(res, 200, await accounts.meta())
         return
       }
 
@@ -119,6 +119,7 @@ export function createDiscordHttpHandlers(opts) {
             token: body.token,
             label: body.label,
             enabled: body.enabled,
+            agentPreset: body.agentPreset,
             intents: body.intents,
             allowedGuilds: body.allowedGuilds,
             allowAllGuilds: body.allowAllGuilds,
