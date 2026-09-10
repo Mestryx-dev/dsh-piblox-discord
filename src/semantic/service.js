@@ -485,7 +485,7 @@ export function createSemanticDiscordService(deps) {
           : null
       const auth = await authorizeOutboundDelivery(
         account,
-        meta?.parentId
+        meta?.isThread
           ? {
               kind: 'thread',
               channelId,
@@ -549,7 +549,7 @@ export function createSemanticDiscordService(deps) {
           : null
       const auth = await authorizeOutboundDelivery(
         account,
-        meta?.isThread || meta?.parentId
+        meta?.isThread
           ? {
               kind: 'thread',
               channelId,
