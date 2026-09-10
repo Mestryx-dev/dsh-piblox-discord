@@ -1,22 +1,13 @@
 /**
  * Shared types and forward-compatible message model for dsh-piblox-discord.
  * No discord.js types leak into the public plugin API.
+ *
+ * Component kinds / encode helpers live in `./components/` (canonical SSOT for V2 tree).
  */
 
 /**
- * @typedef {'TextDisplay'|'Container'|'Section'|'Button'|'Select'|'File'|'ActionRow'|'Unknown'} ComponentKind
- */
-
-/**
- * Forward-compatible component node (Components V2-ready).
- * Unknown kinds use bounded raw metadata — do not assume ActionRow-only.
- * @typedef {{
- *   kind: ComponentKind,
- *   children?: ComponentNode[],
- *   text?: string,
- *   customId?: string,
- *   raw?: Record<string, unknown>,
- * }} ComponentNode
+ * @typedef {import('./components/encode.js').ComponentKind} ComponentKind
+ * @typedef {import('./components/encode.js').ComponentNode} ComponentNode
  */
 
 /**
@@ -24,9 +15,13 @@
  * @typedef {{
  *   content?: string,
  *   components?: ComponentNode[],
+ *   componentsV2?: boolean,
+ *   flags?: number,
+ *   embeds?: unknown[],
  *   replyTo?: string,
  *   nonce?: string,
  *   enforceNonce?: boolean,
+ *   ephemeral?: boolean,
  *   allowedMentions?: { parse?: string[], users?: string[], roles?: string[], repliedUser?: boolean },
  *   raw?: Record<string, unknown>,
  * }} OutboundMessage
@@ -44,7 +39,7 @@
  */
 
 /**
- * Normalized inbound platform event (plugin-local; not a Core EVENT_TYPE).
+ * Normalized inbound message event (plugin-local; not a Core EVENT_TYPE).
  * @typedef {{
  *   type: 'discord.message.created',
  *   accountId: string,
@@ -61,12 +56,46 @@
  *   isDm?: boolean,
  *   correlationId?: string,
  *   raw?: Record<string, unknown>,
- * }} PlatformEvent
+ * }} PlatformMessageEvent
+ */
+
+/**
+ * Normalized inbound interaction (delivery-agnostic).
+ * Interaction = authenticated transport intent, NOT authorization.
+ * @typedef {{
+ *   type: 'discord.interaction.created'|'discord.button.clicked'|'discord.select.changed',
+ *   accountId: string,
+ *   eventId: string,
+ *   interactionId: string,
+ *   applicationId?: string,
+ *   guildId?: string,
+ *   channelId: string,
+ *   threadId?: string,
+ *   parentChannelId?: string,
+ *   userId: string,
+ *   messageId?: string,
+ *   customId?: string,
+ *   componentType?: string,
+ *   values?: string[],
+ *   isBot?: boolean,
+ *   isDm?: boolean,
+ *   deliveryMode?: 'gateway'|'http_endpoint',
+ *   installationContext?: string | null,
+ *   interactionContext?: string | null,
+ *   timestamp?: string,
+ *   correlationId?: string,
+ *   sessionId?: string,
+ *   raw?: Record<string, unknown>,
+ * }} PlatformInteraction
+ */
+
+/**
+ * @typedef {PlatformMessageEvent | PlatformInteraction} PlatformEvent
  */
 
 /**
  * Simulated transport failure kinds for FakeTransport hooks.
- * @typedef {'429'|'5xx'|'timeout'|'permission'|'auth'|'invalid_payload'|'unknown_target'|'network'} SimulatedFailure
+ * @typedef {'429'|'5xx'|'timeout'|'permission'|'auth'|'invalid_payload'|'unknown_target'|'network'|'interaction_expired'|'already_acknowledged'} SimulatedFailure
  */
 
 /**
@@ -77,21 +106,7 @@
  * }} TransportFailure
  */
 
-export const COMPONENT_KINDS = Object.freeze([
-  'TextDisplay',
-  'Container',
-  'Section',
-  'Button',
-  'Select',
-  'File',
-  'ActionRow',
-  'Unknown',
-])
-
-/**
- * @param {unknown} node
- * @returns {node is ComponentNode}
- */
-export function isComponentNode(node) {
-  return Boolean(node && typeof node === 'object' && typeof /** @type {any} */ (node).kind === 'string')
-}
+export {
+  COMPONENT_KINDS,
+  isComponentNode,
+} from './components/encode.js'

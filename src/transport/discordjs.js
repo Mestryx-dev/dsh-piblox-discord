@@ -10,6 +10,8 @@
 
 import { mapDiscordJsError } from '../discord-errors.js'
 import { TransportError } from './fake.js'
+import { encodeOutboundComponents, defaultAllowedMentions } from '../components/encode.js'
+import { normalizeInteractionCreate } from '../components/normalize-interaction.js'
 
 /**
  * @typedef {import('./transport.js').DiscordTransport} DiscordTransport
@@ -87,15 +89,37 @@ export function normalizeMessageCreate(accountId, message) {
 
 /**
  * Build REST create/edit body from OutboundMessage (nonce / enforce_nonce preserved).
+ * Components encode from ComponentNode tree (Components V2 when applicable).
  * @param {OutboundMessage} payload
  */
 export function toDiscordMessageBody(payload) {
   /** @type {Record<string, unknown>} */
   const body = {}
-  if (payload?.content != null) body.content = payload.content
+  const encoded =
+    payload?.components && Array.isArray(payload.components) && payload.components.length
+      ? encodeOutboundComponents(payload.components, {
+          componentsV2: payload.componentsV2,
+        })
+      : null
+
+  // Components V2 messages must not mix classic `content` with the V2 flag.
+  if (encoded?.encoding === 'components_v2') {
+    body.components = encoded.components
+    body.flags = encoded.flags | (payload?.flags ? Number(payload.flags) : 0)
+  } else {
+    if (payload?.content != null) body.content = payload.content
+    if (encoded?.components?.length) body.components = encoded.components
+    if (payload?.flags != null) body.flags = Number(payload.flags)
+  }
+
+  if (payload?.embeds != null) body.embeds = payload.embeds
   if (payload?.nonce != null) body.nonce = String(payload.nonce)
   if (payload?.enforceNonce != null) body.enforceNonce = Boolean(payload.enforceNonce)
-  if (payload?.allowedMentions) body.allowedMentions = payload.allowedMentions
+  body.allowedMentions = payload?.allowedMentions || defaultAllowedMentions()
+  if (payload?.ephemeral) {
+    // MessageFlags.Ephemeral = 64 — for interaction responses only
+    body.flags = (Number(body.flags) || 0) | 64
+  }
   if (payload?.replyTo) {
     body.reply = { messageReference: String(payload.replyTo), failIfNotExists: false }
   }
@@ -140,6 +164,8 @@ export class DiscordJsTransport {
      * @type {Array<Record<string, unknown>>}
      */
     this.restObservations = []
+    /** @type {Map<string, any>} interactionId → discord.js Interaction (ACK window) */
+    this._interactions = new Map()
   }
 
   async _loadDiscord() {
@@ -352,6 +378,10 @@ export class DiscordJsTransport {
       void this._dispatchMessageCreate(accountId, message)
     })
 
+    client.on?.('interactionCreate', (interaction) => {
+      void this._dispatchInteractionCreate(accountId, interaction)
+    })
+
     // Diagnostic: prove whether Gateway delivers MESSAGE_CREATE at all (stdout; no token/content).
     client.on?.('raw', (packet) => {
       if (packet?.t !== 'MESSAGE_CREATE') return
@@ -399,6 +429,153 @@ export class DiscordJsTransport {
           `discordjs: inbound handler error account=${accountId} err=${err instanceof Error ? err.message : err}`,
         )
       }
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {any} interaction
+   */
+  async _dispatchInteractionCreate(accountId, interaction) {
+    const id = interaction?.id != null ? String(interaction.id) : ''
+    if (id) this._interactions.set(`${accountId}:${id}`, interaction)
+    // eslint-disable-next-line no-console
+    console.warn(
+      `discordjs: interactionCreate account=${accountId} id=${id} type=${interaction?.type ?? ''} custom=${interaction?.customId || ''} channel=${interaction?.channelId || ''} handlers=${this.handlers.length}`,
+    )
+    let event
+    try {
+      event = normalizeInteractionCreate(accountId, interaction, { deliveryMode: 'gateway' })
+    } catch (err) {
+      this.logger?.warn?.(
+        `discordjs: interaction normalize failed account=${accountId} err=${err instanceof Error ? err.message : err}`,
+      )
+      return
+    }
+    for (const handler of [...this.handlers]) {
+      try {
+        await handler(event)
+      } catch (err) {
+        this.logger?.warn?.(
+          `discordjs: interaction handler error account=${accountId} err=${err instanceof Error ? err.message : err}`,
+        )
+      }
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} interactionId
+   */
+  _requireInteraction(accountId, interactionId) {
+    const key = `${accountId}:${interactionId}`
+    const ix = this._interactions.get(key)
+    if (!ix) {
+      throw new TransportError('unknown_target', `interaction not found: ${interactionId}`)
+    }
+    return ix
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} interactionId
+   * @param {{ ephemeral?: boolean, update?: boolean }} [opts]
+   */
+  async deferInteraction(accountId, interactionId, opts = {}) {
+    try {
+      const ix = this._requireInteraction(accountId, interactionId)
+      if (opts.update && typeof ix.deferUpdate === 'function') {
+        await ix.deferUpdate()
+      } else {
+        await ix.deferReply({ ephemeral: Boolean(opts.ephemeral), fetchReply: false })
+      }
+      return {
+        accountId,
+        channelId: String(ix.channelId || ''),
+        messageId: String(interactionId),
+        threadId: ix.channel?.isThread?.() ? String(ix.channelId) : undefined,
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} interactionId
+   * @param {OutboundMessage} payload
+   */
+  async followUpInteraction(accountId, interactionId, payload) {
+    try {
+      const ix = this._requireInteraction(accountId, interactionId)
+      const body = toDiscordMessageBody(payload)
+      delete body.nonce
+      delete body.enforceNonce
+      delete body.reply
+      const sent = await ix.followUp(body)
+      return {
+        accountId,
+        channelId: String(ix.channelId || sent?.channelId || ''),
+        messageId: String(sent?.id || ''),
+        guildId: sent?.guildId != null ? String(sent.guildId) : undefined,
+        threadId: ix.channel?.isThread?.() ? String(ix.channelId) : undefined,
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} interactionId
+   * @param {OutboundMessage} payload
+   */
+  async editInteractionReply(accountId, interactionId, payload) {
+    try {
+      const ix = this._requireInteraction(accountId, interactionId)
+      const body = toDiscordMessageBody(payload)
+      delete body.nonce
+      delete body.enforceNonce
+      delete body.reply
+      const sent = await ix.editReply(body)
+      return {
+        accountId,
+        channelId: String(ix.channelId || ''),
+        messageId: String(sent?.id || interactionId),
+        guildId: sent?.guildId != null ? String(sent.guildId) : undefined,
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
+    }
+  }
+
+  /**
+   * Component message update (or reply-as-update when not yet deferred).
+   * @param {string} accountId
+   * @param {string} interactionId
+   * @param {OutboundMessage} payload
+   */
+  async updateInteraction(accountId, interactionId, payload) {
+    try {
+      const ix = this._requireInteraction(accountId, interactionId)
+      const body = toDiscordMessageBody(payload)
+      delete body.nonce
+      delete body.enforceNonce
+      delete body.reply
+      if (typeof ix.update === 'function' && !ix.deferred && !ix.replied) {
+        await ix.update(body)
+      } else if (typeof ix.editReply === 'function') {
+        await ix.editReply(body)
+      } else {
+        throw new TransportError('invalid_payload', 'interaction update not available')
+      }
+      return {
+        accountId,
+        channelId: String(ix.channelId || ''),
+        messageId: String(ix.message?.id || interactionId),
+      }
+    } catch (err) {
+      throw mapDiscordJsError(err)
     }
   }
 

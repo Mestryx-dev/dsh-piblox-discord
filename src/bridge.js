@@ -14,6 +14,12 @@ import { authorizeInbound } from './config.js'
 import { buildFollowupMessage } from './message-source.js'
 import { inboundEventKey } from './inbound-dedupe.js'
 import { threadNameFromContent, DEFAULT_THREAD_NAME } from './thread-name.js'
+import {
+  parseCustomId,
+  defaultAllowedMentions,
+  buildLabInteractionSmokeMessage,
+} from './components/encode.js'
+
 
 /**
  * Extract assistant text from a session/event payload (best-effort).
@@ -330,7 +336,13 @@ export class DiscordSessionBridge {
    * @param {import('./types.js').PlatformEvent & { interactionId?: string }} event
    */
   async handleInbound(event) {
-    if (event.type === 'discord.interaction' || event.interactionId) {
+    if (
+      event.type === 'discord.interaction' ||
+      event.type === 'discord.interaction.created' ||
+      event.type === 'discord.button.clicked' ||
+      event.type === 'discord.select.changed' ||
+      event.interactionId
+    ) {
       return this._handleInteraction(event)
     }
 
@@ -601,7 +613,9 @@ export class DiscordSessionBridge {
   }
 
   /**
-   * Interaction intent path — same durable dedupe, no approval semantics.
+   * Interaction path (LOCKED):
+   *   normalize (transport) → authorize → dedupe(interaction_id) → ACK/defer → consumer intent
+   * Interaction = transport intent, NOT authorization / NOT AgentLoop by default.
    * @param {any} event
    */
   async _handleInteraction(event) {
@@ -615,6 +629,23 @@ export class DiscordSessionBridge {
     const interactionId = String(event.interactionId || event.eventId || '')
     if (!interactionId) return { ok: false, reason: 'malformed_event' }
 
+    // Authorize before claim (same fail-closed boundary as MESSAGE_CREATE)
+    const auth = authorizeInbound(account, event)
+    if (!auth.ok) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `discord bridge: interaction authorize deny account=${accountId} reason=${auth.reason} guild=${event.guildId || ''} channel=${event.channelId || ''} parent=${event.parentChannelId || ''} user=${event.userId || ''} ix=${interactionId}`,
+      )
+      // Best-effort ACK so Discord does not show "interaction failed" — still no consumer.
+      await this._ackInteraction(event).catch(() => {})
+      return { ok: false, reason: auth.reason }
+    }
+
+    if (account.ignoreBots !== false && event.isBot) {
+      await this._ackInteraction(event).catch(() => {})
+      return { ok: false, reason: 'ignored_bot' }
+    }
+
     if (this.inboundDedupe) {
       const claimed = await this.inboundDedupe.claim({
         accountId,
@@ -627,18 +658,213 @@ export class DiscordSessionBridge {
     }
 
     try {
-      this.interactionDispatches.push({ accountId, interactionId })
-      if (typeof this.onInteractionIntent === 'function') {
-        await this.onInteractionIntent(event)
+      // ACK before any consumer / AgentLoop work (Discord ~3s window)
+      const ack = await this._ackInteraction(event)
+      if (!ack.ok) {
+        return { ok: false, reason: ack.reason || 'ack_failed', message: ack.message }
       }
+
+      // Optional thread binding context (reuse — do not mint new session on click)
+      let sessionId
+      let bindingKey
+      if (event.threadId || event.parentChannelId) {
+        try {
+          const identity = buildBindingIdentity(accountId, {
+            channelId: event.channelId,
+            threadId: event.threadId || event.channelId,
+            userId: event.userId,
+            isDm: event.isDm,
+          })
+          const external = toExternalIdentity(identity)
+          bindingKey = `discord:${external.scope}:${external.external_id}`
+          const existing =
+            typeof this.conversationBinding.resolve === 'function'
+              ? this.conversationBinding.resolve(external)
+              : null
+          if (existing?.session_id) {
+            sessionId = existing.session_id
+            event.sessionId = sessionId
+          }
+        } catch {
+          /* binding optional for unbound interactions */
+        }
+      }
+
+      const intent = {
+        accountId,
+        interactionId,
+        type: event.type,
+        customId: event.customId,
+        componentType: event.componentType,
+        values: event.values,
+        channelId: event.channelId,
+        threadId: event.threadId,
+        parentChannelId: event.parentChannelId,
+        messageId: event.messageId,
+        userId: event.userId,
+        guildId: event.guildId,
+        deliveryMode: event.deliveryMode || 'gateway',
+        sessionId,
+        bindingKey,
+      }
+
+      this.interactionDispatches.push({
+        accountId,
+        interactionId,
+        customId: event.customId,
+        sessionId,
+      })
+
+      // Generic LAB smoke intents (dsh1.smoke_*) — not product/Vega workflows
+      const smoke = await this._handleSmokeInteraction(event, intent)
+      if (!smoke.handled && typeof this.onInteractionIntent === 'function') {
+        await this.onInteractionIntent({ ...event, intent })
+      }
+
       if (this.inboundDedupe) {
-        await this.inboundDedupe.markDispatched(accountId, interactionId)
+        await this.inboundDedupe.markDispatched(accountId, interactionId, {
+          sessionId,
+        })
         await this.inboundDedupe.markCompleted(accountId, interactionId)
       }
-      return { ok: true, interactionId, dispatched: true }
+      return {
+        ok: true,
+        interactionId,
+        dispatched: true,
+        sessionId,
+        ack: ack.mode,
+        smoke: smoke.handled ? smoke.result : undefined,
+      }
     } catch (err) {
       this.logger?.warn?.(`interaction dispatch failed: ${err?.message || err}`)
       throw err
+    }
+  }
+
+  /**
+   * Immediate defer via outbox (deadline strategy).
+   * Buttons/selects → deferUpdate when attached to a message; else deferReply.
+   * @param {any} event
+   */
+  async _ackInteraction(event) {
+    if (!this.outbox || typeof this.transport.deferInteraction !== 'function') {
+      // Fake without methods shouldn't happen; treat as soft skip only in tests without outbox
+      return { ok: true, mode: 'skipped' }
+    }
+    const update = Boolean(event.messageId)
+    const operationId = `ix:defer:${event.accountId}:${event.interactionId}`
+    await this.outbox.enqueue({
+      operationId,
+      accountId: event.accountId,
+      operationType: 'deferInteraction',
+      target: { interactionId: event.interactionId, channelId: event.channelId },
+      payload: {
+        ephemeral: false,
+        raw: { update },
+      },
+      useNonce: false,
+    })
+    const receipt = await this._driveOperation(operationId, event.accountId)
+    if (!receipt || receipt.state !== 'delivered') {
+      return {
+        ok: false,
+        reason: 'ack_failed',
+        message: receipt?.last_error?.message || receipt?.state || 'defer_failed',
+      }
+    }
+    return { ok: true, mode: update ? 'deferUpdate' : 'deferReply' }
+  }
+
+  /**
+   * Post generic LAB interaction smoke (TextDisplay + Button + StringSelect) via outbox.
+   * Not a Vega/business workflow — test/demo only.
+   *
+   * @param {{
+   *   accountId: string,
+   *   channelId: string,
+   *   operationId?: string,
+   *   pingCustomId?: string,
+   *   selectCustomId?: string,
+   * }} input
+   */
+  async postLabInteractionSmoke(input) {
+    const accountId = String(input.accountId || '')
+    const channelId = String(input.channelId || '')
+    if (!accountId || !channelId) {
+      return { ok: false, reason: 'malformed_input' }
+    }
+    if (!this.outbox) return { ok: false, reason: 'outbox_required' }
+    if (!this.transport.isAccountRunning(accountId)) {
+      return { ok: false, reason: 'account_stopped' }
+    }
+
+    const smoke = buildLabInteractionSmokeMessage({
+      pingCustomId: input.pingCustomId,
+      selectCustomId: input.selectCustomId,
+    })
+    const operationId =
+      input.operationId || `lab:interaction-smoke:${accountId}:${channelId}:${Date.now()}`
+    await this.outbox.enqueue({
+      operationId,
+      accountId,
+      operationType: 'sendMessage',
+      target: { channelId },
+      payload: {
+        components: smoke.components,
+        allowedMentions: smoke.allowedMentions,
+        componentsV2: true,
+      },
+      useNonce: true,
+    })
+    const receipt = await this._driveOperation(operationId, accountId)
+    return {
+      ok: receipt?.state === 'delivered',
+      operationId,
+      receipt,
+      customIds: smoke.customIds,
+      encoding: 'components_v2',
+      discord_resource_id: receipt?.discord_resource_id || null,
+    }
+  }
+
+  /**
+   * Generic interaction smoke handler for custom ids minted with intent smoke_*.
+   * @param {any} event
+   * @param {any} intent
+   */
+  async _handleSmokeInteraction(event, intent) {
+    const parsed = parseCustomId(event.customId)
+    if (!parsed.ok || !String(parsed.intent).startsWith('smoke')) {
+      return { handled: false }
+    }
+    const values = Array.isArray(event.values) ? event.values.map(String) : []
+    const summary =
+      event.type === 'discord.select.changed'
+        ? `select received intent=${parsed.intent} values=${values.join(',') || '(none)'}`
+        : `button received intent=${parsed.intent}`
+
+    const operationId = `ix:followup:${event.accountId}:${event.interactionId}`
+    await this.outbox.enqueue({
+      operationId,
+      accountId: event.accountId,
+      operationType: 'followUpInteraction',
+      target: { interactionId: event.interactionId, channelId: event.channelId },
+      payload: {
+        content: summary,
+        allowedMentions: defaultAllowedMentions(),
+        ephemeral: false,
+      },
+      useNonce: false,
+    })
+    const receipt = await this._driveOperation(operationId, event.accountId)
+    return {
+      handled: true,
+      result: {
+        intent: parsed.intent,
+        summary,
+        delivered: receipt?.state === 'delivered',
+        discord_resource_id: receipt?.discord_resource_id || null,
+      },
     }
   }
 

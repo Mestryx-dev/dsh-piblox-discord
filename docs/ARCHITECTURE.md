@@ -1,7 +1,8 @@
 # Architecture — dsh-piblox-discord
 
-**STATUS:** V1 TRANSPORT + CONFIG PLANE IMPLEMENTED (FakeTransport) / LIVE GATEWAY NOT ACTIVATED  
-**Labels:** LOCKED intents from mission; OBSERVED DSH seams; IMPLEMENTED reliability + operator Settings.
+**STATUS:** V1 TRANSPORT + CONFIG PLANE + COMPONENTS/INTERACTIONS FOUNDATION IMPLEMENTED  
+(FakeTransport + Gateway LAB) / **PRODUCTION_READY = NO**  
+**Labels:** LOCKED intents from mission; OBSERVED DSH seams; IMPLEMENTED reliability + operator Settings + Components V2 encode + interaction path.
 
 **LOCKED:** `Modern Discord API / Components V2 baseline = LOCKED` ([ADR-0007](adr/0007-modern-discord-baseline.md)) — Discord HTTP **`v10`**, **`discord.js` 14.x** direction, Components V2 as first-class transport/render primitive (not legacy ActionRow-first).
 
@@ -110,6 +111,12 @@ V1 ships typed helpers for a subset; the **codec/envelope** must not require red
 for remaining families. Full advanced convenience APIs (including modern modals,
 File Upload, Radio/Checkbox groups, richer media) may remain **V2**.
 
+**IMPLEMENTED (foundation):** `src/components/` — `ComponentNode` tree → Discord transport encode
+(`encodeOutboundComponents`), opaque `raw` nodes for future families, `mintCustomId` /
+`parseCustomId` (`dsh1.<intent>.<nonce>`, ≤100 chars, no secrets), default
+`allowed_mentions: { parse: [] }`. Legacy `content`/`embeds`/ActionRow-only payloads remain
+a compatibility path; V2 top-level kinds set `MESSAGE_FLAG_IS_COMPONENTS_V2`.
+
 ## 5.1 Modern message + modal + webhook targets (LOCKED representation)
 
 Target message contract accounts for (where applicable): replies, message
@@ -178,6 +185,23 @@ Discord interaction/event (FakeTransport inject today; Gateway later)
   → assistant output → DeliveryOutbox → transport (targets thread when bound)
 ```
 
+### Interaction inbound (IMPLEMENTED foundation)
+
+```text
+interactionCreate (Gateway today; HTTP endpoint later — same normalized shape)
+  → normalizeInteractionCreate (no discord.js Interaction leak)
+  → authorize (identical security boundary; threads use parent_channel_id)
+  → best-effort ACK on deny (no consumer)
+  → inbound dedupe claim (account_id + interaction_id)   # NOT message_id
+  → outbox deferInteraction (deferUpdate|deferReply) BEFORE consumer / AgentLoop
+  → optional ConversationBinding.resolve (reuse; never mint solely for a click)
+  → generic intent dispatch (LAB smoke_* or onInteractionIntent)
+  → followUp / edit / update via outbox
+```
+
+**LOCKED:** Interaction = authenticated transport **intent**, **not** authorization.
+Gateway vs HTTP delivery is an adapter detail (`delivery_mode`); consumer contract unchanged.
+
 Ordering note: **authorize before claim** so denied traffic never enters the durable dedupe store.
 
 **Conversation topology (ADR-0013):**
@@ -198,13 +222,16 @@ Consumers must not depend on whether the interaction arrived via Gateway or HTTP
 ## 9. Outbound path (IMPLEMENTED + TESTED)
 
 ```text
-assistant/chunk|message | DSH consumer / messages API
-  → coalesce stream buffer (no per-token enqueue)
-  → outbox.enqueue (sendMessage | replyMessage | editMessage | createThread)
+assistant/chunk|message | DSH consumer / messages API | interaction ACK/follow-up
+  → coalesce stream buffer (no per-token enqueue) | immediate interaction ops
+  → outbox.enqueue (sendMessage | replyMessage | editMessage | createThread
+                    | deferInteraction | followUpInteraction | editInteractionReply
+                    | updateInteraction)
   → outbox.tick → DiscordTransport
   → delivered | retry_wait | failed_terminal (receipt)
 ```
 
+Component trees travel as `payload.components` (ComponentNode[]); transport encodes to Discord.
 **LOCKED:** transport failure ≠ DSH/domain failure. A 429 leaves the DSH turn successful and the delivery op in `retry_wait`.
 
 **Idempotency (LOCKED principle):**

@@ -1,10 +1,16 @@
 # Event contract — dsh-piblox-discord
 
-**STATUS:** TARGET CONTRACT **LOCKED** (ADR-0007) / normalization PROPOSED for unshipped event kinds  
+**STATUS:** TARGET CONTRACT **LOCKED** (ADR-0007) / message + interaction normalization **IMPLEMENTED** (FakeTransport + Gateway); remaining event kinds PROPOSED  
 Normalized events are **PROPOSED** where not yet exercised end-to-end. Discord Gateway names are **REFERENCE** to current Discord docs.  
 Core `observability.emit` types are **OBSERVED** (closed set).  
 
 **LOCKED:** `Modern Discord API / Components V2 baseline = LOCKED` — delivery-agnostic interactions + forward-compatible unknown events ([ADR-0007](adr/0007-modern-discord-baseline.md)).
+
+**IMPLEMENTED interaction types (plugin-local, not Core EVENT_TYPES):**
+`discord.button.clicked`, `discord.select.changed`, `discord.interaction.created`
+via Gateway `interactionCreate` → `normalizeInteractionCreate`. Consumers must not receive
+raw discord.js `Interaction` objects. Observability stays on closed Core vocabulary;
+Discord details belong in structured payloads.
 
 ## 1. Normalized event envelope (PROPOSED)
 

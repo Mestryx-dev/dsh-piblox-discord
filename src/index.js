@@ -51,6 +51,19 @@ export { buildBindingIdentity, toExternalIdentity } from './binding.js'
 export { threadNameFromContent, DEFAULT_THREAD_NAME, DISCORD_THREAD_NAME_MAX } from './thread-name.js'
 export { createDiscordUserMessage, buildFollowupMessage } from './message-source.js'
 export { COMPONENT_KINDS, isComponentNode } from './types.js'
+export {
+  DISCORD_COMPONENT_TYPE,
+  DISCORD_CUSTOM_ID_MAX,
+  CUSTOM_ID_SCHEME,
+  MESSAGE_FLAG_IS_COMPONENTS_V2,
+  BUTTON_STYLE,
+  mintCustomId,
+  parseCustomId,
+  defaultAllowedMentions,
+  encodeOutboundComponents,
+  buildLabInteractionSmokeMessage,
+  normalizeInteractionCreate,
+} from './components/index.js'
 export { createDeliveryOutbox } from './outbox/index.js'
 export { createOutboxStore, defaultOutboxPath } from './outbox/store.js'
 export { toReceipt } from './outbox/types.js'
@@ -177,6 +190,7 @@ export function createDiscordProvider(deps, config = {}) {
     inboundDedupe,
     accountsConfigStore,
     messages,
+    postLabInteractionSmoke: (input) => bridge.postLabInteractionSmoke(input),
   }
 
   function applyLiveConfig(next) {
@@ -277,6 +291,34 @@ export function createDiscordProvider(deps, config = {}) {
         continue
       }
       await startConfiguredAccount(accountId, account)
+    }
+
+    // Optional one-shot LAB interaction smoke (Components V2 Button+Select). Not product UI.
+    const smokeAccount = process.env.DSH_INTERACTION_SMOKE_ACCOUNT
+    const smokeChannel = process.env.DSH_INTERACTION_SMOKE_CHANNEL
+    if (smokeAccount && smokeChannel) {
+      setTimeout(() => {
+        bridge
+          .postLabInteractionSmoke({
+            accountId: String(smokeAccount),
+            channelId: String(smokeChannel),
+            operationId: `lab:interaction-smoke:${smokeAccount}:${smokeChannel}`,
+          })
+          .then((r) => {
+            deps.logger?.info?.(
+              `discord: LAB interaction smoke posted account=${smokeAccount} channel=${smokeChannel} ok=${r.ok} resource=${r.discord_resource_id || ''} encoding=${r.encoding || ''}`,
+            )
+            // eslint-disable-next-line no-console
+            console.info(
+              `discord LAB interaction smoke: ok=${r.ok} resource=${r.discord_resource_id || ''} customIds=${JSON.stringify(r.customIds || {})}`,
+            )
+          })
+          .catch((err) => {
+            deps.logger?.warn?.(
+              `discord: LAB interaction smoke failed err=${err instanceof Error ? err.message : err}`,
+            )
+          })
+      }, 2500)
     }
   }
   api.stop = async function stop() {

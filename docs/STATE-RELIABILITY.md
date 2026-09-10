@@ -130,6 +130,16 @@ normalize → authorize → dedupe claim
 
 Authorize precedes claim so denied events are not stored.
 
+### Interaction reliability (IMPLEMENTED foundation)
+
+| Concern | Behaviour |
+|---|---|
+| Dedupe key | `account_id + interaction_id` (never `message_id` as primary for component clicks) |
+| ACK deadline | `deferInteraction` via outbox **before** consumer / AgentLoop |
+| Already acknowledged / expired | Mapped to terminal `already_acknowledged` / `interaction_expired` / `unknown_target` |
+| Response retry | Outbox `operation_id` idempotency — must not re-execute business intent (intent already completed in dedupe) |
+| Thread context | Resolve existing `discord:<acct>.thread:<thread_id>` binding; do not mint session on click alone |
+
 Do not mark launcher inbound `completed` until thread is established (when required) and binding/session dispatch is accepted.
 
 ### Thread create reliability (IMPLEMENTED)

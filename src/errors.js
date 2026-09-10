@@ -108,6 +108,22 @@ export function classifyTransportError(err) {
       message,
     }
   }
+  if (code === 'already_acknowledged' || /already.?been.?acknowledged/i.test(message)) {
+    return {
+      class: 'discord_domain_failure',
+      retry: 'terminal',
+      code: 'already_acknowledged',
+      message,
+    }
+  }
+  if (code === 'interaction_expired' || /unknown interaction|interaction.?expired/i.test(message)) {
+    return {
+      class: 'discord_domain_failure',
+      retry: 'terminal',
+      code: 'interaction_expired',
+      message,
+    }
+  }
 
   // Default: treat as terminal domain to avoid infinite retry loops on unknowns.
   return {

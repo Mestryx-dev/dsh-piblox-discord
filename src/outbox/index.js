@@ -110,7 +110,17 @@ export function createDeliveryOutbox(options) {
     const operationId = String(input.operationId || '').trim()
     if (!operationId) throw new TypeError('outbox.enqueue: operationId required')
     if (!input.accountId) throw new TypeError('outbox.enqueue: accountId required')
-    if (!input.target?.channelId && input.operationType !== 'createThread') {
+    const interactionOps = new Set([
+      'deferInteraction',
+      'followUpInteraction',
+      'editInteractionReply',
+      'updateInteraction',
+    ])
+    if (interactionOps.has(input.operationType)) {
+      if (!input.target?.interactionId) {
+        throw new TypeError('outbox.enqueue: target.interactionId required for interaction ops')
+      }
+    } else if (!input.target?.channelId && input.operationType !== 'createThread') {
       // createThread may use parentChannelId in target
       if (!input.target?.parentChannelId) {
         throw new TypeError('outbox.enqueue: target.channelId required')
@@ -409,6 +419,10 @@ export function createDeliveryOutbox(options) {
       const payload = {
         content: op.payload.content,
         components: op.payload.components,
+        componentsV2: op.payload.componentsV2,
+        flags: op.payload.flags,
+        ephemeral: op.payload.ephemeral,
+        allowedMentions: op.payload.allowedMentions,
         replyTo: op.payload.replyTo || op.target.messageId,
         nonce: op.nonce || undefined,
         enforceNonce: op.enforce_nonce || undefined,
@@ -429,7 +443,6 @@ export function createDeliveryOutbox(options) {
           return await transport.editMessage(op.account_id, op.target.channelId, op.target.messageId, payload)
         case 'createThread': {
           if (typeof transport.createThread !== 'function') {
-            // FakeTransport implements createThread; live skeleton may not yet.
             throw Object.assign(new Error('createThread not supported by transport'), {
               code: 'invalid_payload',
             })
@@ -438,6 +451,25 @@ export function createDeliveryOutbox(options) {
             name: op.payload.threadName || 'thread',
             messageId: op.target.messageId,
           })
+        }
+        case 'deferInteraction': {
+          requireTransportFn(transport, 'deferInteraction')
+          return await transport.deferInteraction(op.account_id, op.target.interactionId, {
+            ephemeral: Boolean(op.payload.ephemeral),
+            update: Boolean(op.payload.raw?.update),
+          })
+        }
+        case 'followUpInteraction': {
+          requireTransportFn(transport, 'followUpInteraction')
+          return await transport.followUpInteraction(op.account_id, op.target.interactionId, payload)
+        }
+        case 'editInteractionReply': {
+          requireTransportFn(transport, 'editInteractionReply')
+          return await transport.editInteractionReply(op.account_id, op.target.interactionId, payload)
+        }
+        case 'updateInteraction': {
+          requireTransportFn(transport, 'updateInteraction')
+          return await transport.updateInteraction(op.account_id, op.target.interactionId, payload)
         }
         default: {
           const _exhaustive = op.operation_type
@@ -449,6 +481,16 @@ export function createDeliveryOutbox(options) {
     } catch (err) {
       // Normalize discord.js shapes into TransportError taxonomy for classifyTransportError.
       throw toClassifiableError(err)
+    }
+  }
+
+  /** @param {any} transport
+   * @param {string} name */
+  function requireTransportFn(transport, name) {
+    if (typeof transport[name] !== 'function') {
+      throw Object.assign(new Error(`${name} not supported by transport`), {
+        code: 'invalid_payload',
+      })
     }
   }
 
@@ -517,6 +559,10 @@ function sanitizePayload(payload) {
     contentPreview: preview,
     replyTo: payload.replyTo,
     components: payload.components,
+    componentsV2: payload.componentsV2,
+    flags: payload.flags,
+    ephemeral: payload.ephemeral,
+    allowedMentions: payload.allowedMentions,
     threadName: payload.threadName,
     raw: payload.raw ? { ...payload.raw } : undefined,
   }

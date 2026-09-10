@@ -7,16 +7,17 @@
  */
 
 /**
- * @typedef {'sendMessage'|'replyMessage'|'editMessage'|'createThread'} OperationType
+ * @typedef {'sendMessage'|'replyMessage'|'editMessage'|'createThread'|'deferInteraction'|'followUpInteraction'|'editInteractionReply'|'updateInteraction'} OperationType
  */
 
 /**
  * @typedef {{
- *   channelId: string,
+ *   channelId?: string,
  *   messageId?: string,
  *   guildId?: string,
  *   threadId?: string,
  *   parentChannelId?: string,
+ *   interactionId?: string,
  * }} OutboxTarget
  */
 
@@ -28,7 +29,11 @@
  *   contentPreview?: string,
  *   replyTo?: string,
  *   components?: unknown[],
+ *   componentsV2?: boolean,
+ *   flags?: number,
+ *   ephemeral?: boolean,
  *   threadName?: string,
+ *   allowedMentions?: { parse?: string[], users?: string[], roles?: string[], repliedUser?: boolean },
  *   raw?: Record<string, unknown>,
  * }} OutboxPayload
  */

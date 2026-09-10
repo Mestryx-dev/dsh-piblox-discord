@@ -20,8 +20,9 @@ Statuses: `LOCKED` | `IMPLEMENTED` | `TESTED` | `DESIGNED_FOR_LIVE` | `PROPOSED`
 | Cordis first-party plugin | LOCKED + IMPLEMENTED | `src/index.js` |
 | Multi-account `0..N` | LOCKED + TESTED | accounts service + Settings |
 | **Modern Discord API / Components V2 baseline** | **LOCKED** | **ADR-0007** — HTTP `v10`, discord.js 14.x, Components V2 first-class, delivery-agnostic interactions, `nonce`/`enforce_nonce`, lossless bitfields, forward-compatible envelopes |
-| Components V2 foundation in V1 MUST | LOCKED | FEATURE-CONTRACT + ARCHITECTURE §5 |
-| Legacy message compatibility | LOCKED | FEATURE-CONTRACT (compat path, not design center) |
+| Components V2 foundation in V1 MUST | LOCKED + **IMPLEMENTED** (encode + opaque nodes) | FEATURE-CONTRACT + `src/components/` |
+| Interaction normalize / ACK / dedupe | **IMPLEMENTED** (Gateway) | bridge + outbox interaction ops |
+| Legacy message compatibility | LOCKED + **IMPLEMENTED** | FEATURE-CONTRACT (compat path, not design center) |
 | Application command / install contexts (model) | LOCKED | FEATURE-CONTRACT — CHAT_INPUT/USER/MESSAGE + GUILD_INSTALL/USER_INSTALL; V1 ops may be guild-only without hard-coding |
 | Interaction delivery independence | LOCKED | EVENT-CONTRACT — Gateway now; HTTP endpoint V2 adapter |
 | Webhooks (incoming + Webhook Events) | LOCKED (V2 target) | FEATURE-CONTRACT — not architecturally excluded |

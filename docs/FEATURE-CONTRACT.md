@@ -1,6 +1,7 @@
 # Feature contract — dsh-piblox-discord
 
-**STATUS:** TARGET CONTRACT **LOCKED** (ADR-0007) / implementation progressing (transport + config plane + thread topology)  
+**STATUS:** TARGET CONTRACT **LOCKED** (ADR-0007) / implementation progressing  
+(transport + config plane + thread topology + **Components V2 / interaction foundation**)  
 Target surface = what the plugin is meant to become.  
 V1 = first shippable increment that proves the architecture — **without** redesigning for Components V2 / modern install / delivery modes later.
 
@@ -178,15 +179,18 @@ Unknown/future component types → bounded raw component nodes (forward-compatib
 
 ## Interaction framework
 
-| Feature | Class | Notes |
-|---|---|---|
-| Normalized interaction contract (delivery-agnostic) | V1 MUST | Gateway now; HTTP endpoint later |
-| Buttons | V1 MUST | intent transport only |
-| Basic selects | V1 MUST | |
-| Deferred replies / follow-ups | V1 MUST | Discord ack window |
-| Ephemeral responses | V1 SHOULD | |
-| Modern modal framework (Label, Text Input, selects, File Upload, Radio/Checkbox groups) | V2 | target contract must support; not text-input-only |
-| Autocomplete | V2 | |
+| Feature | Class | Notes | Implementation |
+|---|---|---|---|
+| Normalized interaction contract (delivery-agnostic) | V1 MUST | Gateway now; HTTP endpoint later | **IMPLEMENTED** (`normalizeInteractionCreate`, `deliveryMode`) |
+| Buttons | V1 MUST | intent transport only | **IMPLEMENTED** |
+| Basic selects | V1 MUST | string/user/role/channel | **IMPLEMENTED** (normalize + encode) |
+| Deferred replies / follow-ups | V1 MUST | Discord ack window | **IMPLEMENTED** (outbox defer / followUp / edit / update) |
+| Ephemeral responses | V1 SHOULD | explicit capability; not default AgentLoop | **IMPLEMENTED** (payload flag) |
+| Modern modal framework (Label, Text Input, selects, File Upload, Radio/Checkbox groups) | V2 | target contract must support; not text-input-only | representable via opaque nodes |
+| Autocomplete | V2 | | not started |
+
+**Doctrine:** Discord interaction = authenticated transport **intent**, **not** authorization.
+Do not encode policy inside `custom_id`.
 
 ## Interaction delivery modes
 

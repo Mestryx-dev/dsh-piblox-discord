@@ -121,29 +121,46 @@ export class FakeTransport {
 
   /**
    * Inject a button/component interaction (intent only — not authorization).
-   * @param {{
-   *   accountId: string,
-   *   interactionId: string,
-   *   channelId?: string,
-   *   guildId?: string,
-   *   userId?: string,
-   *   customId?: string,
-   * }} partial
+   * @param {Record<string, any>} partial
    */
   async injectInteraction(partial) {
+    const interactionId = partial.interactionId || `ix_${++this._seq}`
+    const componentType = partial.componentType || 'button'
+    const type =
+      partial.type ||
+      (componentType === 'button'
+        ? 'discord.button.clicked'
+        : String(componentType).includes('select')
+          ? 'discord.select.changed'
+          : 'discord.interaction.created')
     const event = {
-      type: 'discord.interaction',
-      eventId: partial.interactionId || `ix_${++this._seq}`,
-      interactionId: partial.interactionId || `ix_${this._seq}`,
+      type,
+      eventId: interactionId,
+      interactionId,
       accountId: partial.accountId,
-      channelId: partial.channelId,
+      channelId: partial.channelId || '',
       guildId: partial.guildId,
-      userId: partial.userId,
+      userId: partial.userId || '',
       customId: partial.customId,
+      messageId: partial.messageId,
+      threadId: partial.threadId,
+      parentChannelId: partial.parentChannelId,
+      componentType,
+      values: partial.values,
+      isDm: Boolean(partial.isDm),
+      deliveryMode: partial.deliveryMode || 'gateway',
+      raw: { custom_id: partial.customId || null },
     }
     if (!this.running.has(event.accountId)) {
       throw new TransportError('permission', `account not running: ${event.accountId}`)
     }
+    if (!this._interactions) this._interactions = new Map()
+    this._interactions.set(`${event.accountId}:${interactionId}`, {
+      id: interactionId,
+      deferred: false,
+      replied: false,
+      channelId: event.channelId,
+    })
     for (const handler of [...this.handlers]) {
       await handler(event)
     }
@@ -189,6 +206,12 @@ export class FakeTransport {
     }
     if (spec.code === 'unknown_target') {
       throw new TransportError('unknown_target', 'unknown channel')
+    }
+    if (spec.code === 'already_acknowledged') {
+      throw new TransportError('already_acknowledged', 'interaction already acknowledged')
+    }
+    if (spec.code === 'interaction_expired') {
+      throw new TransportError('interaction_expired', 'unknown interaction')
     }
     throw new TransportError('permission', 'missing permissions')
   }
@@ -321,6 +344,80 @@ export class FakeTransport {
       },
     })
     if (reconcileKey) this._threadByParentMessage.set(reconcileKey, sent)
+    return sent
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} interactionId
+   * @param {{ ephemeral?: boolean, update?: boolean }} [opts]
+   */
+  async deferInteraction(accountId, interactionId, opts = {}) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    const fail = this._takeFailure(accountId)
+    if (fail) this._throwFailure(fail)
+    if (!this._interactions) this._interactions = new Map()
+    const key = `${accountId}:${interactionId}`
+    const ix = this._interactions.get(key) || { id: interactionId, channelId: '' }
+    ix.deferred = true
+    this._interactions.set(key, ix)
+    const sent = {
+      accountId,
+      channelId: String(ix.channelId || ''),
+      messageId: String(interactionId),
+      op: 'deferInteraction',
+      payload: {
+        content: opts.update ? 'deferUpdate' : 'deferReply',
+        ephemeral: Boolean(opts.ephemeral),
+      },
+    }
+    this.outbound.push(sent)
+    return sent
+  }
+
+  /** @param {string} accountId @param {string} interactionId @param {OutboundMessage} payload */
+  async followUpInteraction(accountId, interactionId, payload) {
+    return this._interactionOutbound(accountId, interactionId, payload, 'followUpInteraction')
+  }
+
+  /** @param {string} accountId @param {string} interactionId @param {OutboundMessage} payload */
+  async editInteractionReply(accountId, interactionId, payload) {
+    return this._interactionOutbound(accountId, interactionId, payload, 'editInteractionReply')
+  }
+
+  /** @param {string} accountId @param {string} interactionId @param {OutboundMessage} payload */
+  async updateInteraction(accountId, interactionId, payload) {
+    return this._interactionOutbound(accountId, interactionId, payload, 'updateInteraction')
+  }
+
+  /**
+   * @param {string} accountId
+   * @param {string} interactionId
+   * @param {OutboundMessage} payload
+   * @param {string} op
+   */
+  async _interactionOutbound(accountId, interactionId, payload, op) {
+    if (!this.running.has(accountId)) {
+      throw new TransportError('permission', `account not running: ${accountId}`)
+    }
+    const fail = this._takeFailure(accountId)
+    if (fail) this._throwFailure(fail)
+    if (!this._interactions) this._interactions = new Map()
+    const key = `${accountId}:${interactionId}`
+    const ix = this._interactions.get(key) || { id: interactionId, channelId: '' }
+    ix.replied = true
+    this._interactions.set(key, ix)
+    const messageId = `ixmsg_${++this._seq}`
+    const sent = {
+      accountId,
+      channelId: String(ix.channelId || ''),
+      messageId,
+      op,
+      payload: { ...payload },
+    }
+    this.outbound.push(sent)
     return sent
   }
 }

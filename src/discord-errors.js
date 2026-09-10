@@ -58,9 +58,20 @@ export function mapDiscordJsError(err) {
     if (status === 403 || code === 50013 || code === 50001) {
       return new TransportError('permission', message)
     }
-    // Unknown Channel / Unknown Message
-    if (status === 404 || code === 10003 || code === 10008) {
+    // Unknown Channel / Unknown Message / Unknown Interaction
+    if (status === 404 || code === 10003 || code === 10008 || code === 10062) {
       return new TransportError('unknown_target', message)
+    }
+    // Interaction has already been acknowledged
+    if (code === 40060 || /already.?been.?acknowledged/i.test(message)) {
+      return new TransportError('already_acknowledged', message)
+    }
+    // Interaction token expired / invalid
+    if (code === 50035 && /interaction/i.test(message)) {
+      return new TransportError('interaction_expired', message)
+    }
+    if (/unknown interaction|interaction.?expired|invalid.?webhook.?token/i.test(message)) {
+      return new TransportError('interaction_expired', message)
     }
     if (status === 400) {
       return new TransportError('invalid_payload', message)

@@ -23,6 +23,10 @@
  *   replyMessage(accountId: string, channelId: string, messageId: string, payload: OutboundMessage): Promise<SentMessage>,
  *   editMessage(accountId: string, channelId: string, messageId: string, payload: OutboundMessage): Promise<SentMessage>,
  *   createThread?(accountId: string, parentChannelId: string, opts?: { name?: string, messageId?: string }): Promise<SentMessage & { threadId: string }>,
+ *   deferInteraction?(accountId: string, interactionId: string, opts?: { ephemeral?: boolean, update?: boolean }): Promise<SentMessage>,
+ *   followUpInteraction?(accountId: string, interactionId: string, payload: OutboundMessage): Promise<SentMessage>,
+ *   editInteractionReply?(accountId: string, interactionId: string, payload: OutboundMessage): Promise<SentMessage>,
+ *   updateInteraction?(accountId: string, interactionId: string, payload: OutboundMessage): Promise<SentMessage>,
  * }} DiscordTransport
  */
 
